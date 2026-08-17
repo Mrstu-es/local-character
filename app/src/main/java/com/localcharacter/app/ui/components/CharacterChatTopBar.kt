@@ -120,6 +120,8 @@ fun CharacterChatTopBar(
                     }
                 }
                 Spacer(Modifier.width(metrics.actionGap))
+                // Pin the action buttons to the trailing edge of the bar.
+                Spacer(Modifier.weight(1f))
                 if (metrics.showInlineActions) {
                     ChatTopBarAction(Icons.Default.Star, "Memoria", onClick = onMemory)
                     ChatTopBarAction(
@@ -152,7 +154,6 @@ fun CharacterChatTopBar(
                         }
                     }
                 }
-                Spacer(Modifier.weight(1f))
             }
         }
     }
