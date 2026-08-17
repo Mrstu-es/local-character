@@ -2,6 +2,10 @@
 
 Local Character es una aplicación Android gratuita para conversar con personajes de inteligencia artificial. La idea es que cualquier persona pueda crear y tener su propio personaje, conservar sus conversaciones en privado y elegir entre modelos locales GGUF o proveedores online configurados por el usuario.
 
+## Apoya el proyecto
+
+Si Local Character te resulta útil, puedes apoyar su desarrollo con una propina en Ko-fi: [Apoyar en Ko-fi](https://ko-fi.com/thepassionatestudent).
+
 ## Próximamente
 
 Estamos preparando una aplicación para PC que permitirá usar modelos de IA locales más potentes, junto con nuevas funciones para personalizar personajes, conversaciones y memoria. El proyecto sigue creciendo y toda ayuda, comentario o contribución es bienvenida.
