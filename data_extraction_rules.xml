@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="database" path="local_character.db" />
+        <exclude domain="sharedpref" path="api_credentials_encrypted.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="api_credentials_encrypted.xml" />
+    </device-transfer>
+</data-extraction-rules>
