@@ -2,9 +2,25 @@
 
 Local Character es una aplicación Android gratuita para conversar con personajes de inteligencia artificial. La idea es que cualquier persona pueda crear y tener su propio personaje, conservar sus conversaciones en privado y elegir entre modelos locales GGUF o proveedores online configurados por el usuario.
 
-## Apoya el proyecto
+> **Roleplay con personajes, local y gratuito.** Android y Windows en un mismo proyecto.
 
-Si Local Character te resulta útil, puedes apoyar su desarrollo con una propina en Ko-fi: [Apoyar en Ko-fi](https://ko-fi.com/thepassionatestudent).
+## Descargas
+
+- [Última release y todos los instaladores](https://github.com/Mrstu-es/local-character/releases)
+- [APK Android](https://github.com/Mrstu-es/local-character/releases/latest)
+- [Instalador Windows EXE/MSI](https://github.com/Mrstu-es/local-character/releases/latest)
+
+## Local Character Desktop (Windows)
+
+La edición Desktop lleva la experiencia de roleplay a Windows 10/11 x64. Incluye chat dedicado, biblioteca y repositorios de personajes, grupos, memoria, voces TTS, APIs externas, modelos GGUF y un motor llama.cpp real con streaming cancelable. Detecta CPU, RAM, NVIDIA/Intel y Vulkan; permite elegir GPU, CPU o modo híbrido y prioriza la GPU discreta para cargar más capas del modelo.
+
+Consulta la [descripción completa de Desktop](docs/DESKTOP_VERSION.md), las [notas de la release](docs/RELEASE_NOTES_0.2.0.md) y las [capturas de Android y Windows](docs/screenshots/).
+
+## Local Character Desktop
+
+La carpeta [`desktop/`](desktop/) contiene una aplicación Tauri 2 independiente para Windows 10/11 x64. Su primer objetivo es probar modelos GGUF grandes con CPU, CUDA o Vulkan, medir TTFT/tokens por segundo y conversar con streaming local. No reemplaza ni modifica la aplicación Android.
+
+La base Desktop incluye dashboard React/TypeScript, detector de hardware, registro SQLite de modelos externos, parser de cabecera GGUF y un puente preparado para ejecutar un `llama-cli.exe` real de llama.cpp. Consulta [desktop/README.md](desktop/README.md), [desktop/docs/DECISIONS.md](desktop/docs/DECISIONS.md) y [desktop/docs/PROGRESS.md](desktop/docs/PROGRESS.md) para los requisitos y el estado verificado.
 
 ## Próximamente
 
