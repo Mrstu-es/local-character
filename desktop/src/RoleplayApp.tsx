@@ -1,5 +1,5 @@
 // @ts-nocheck Legacy views remain in this file while the modern chat implementation is active.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
   ArrowDownToLine, ArrowLeft, Bookmark, Bot, Check, ChevronRight, CircleAlert, Copy, Cpu, Edit3, Flag, FolderOpen, Globe2, Home, ImagePlus,
   Library, MessageCircle, MoreHorizontal, PanelLeftClose, PanelLeftOpen,
@@ -99,6 +99,18 @@ export default function RoleplayApp() {
     setConversations((current) => existing ? current : [conversation, ...current]);
     setActiveChat(conversation.id); setView("chats");
   }
+  async function removeConversation(id: string) {
+    const conversation = conversations.find((item) => item.id === id);
+    const name = conversation?.title?.trim() || "este chat";
+    if (!window.confirm(`¿Eliminar ${name} y todos sus mensajes? Esta acción no se puede deshacer.`)) return;
+    try {
+      if (isTauriRuntime()) await deleteConversation(id);
+      setConversations((current) => current.filter((item) => item.id !== id));
+      setActiveChat((current) => current === id ? null : current);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
   async function createGroup(group: GroupRecord) {
     const saved = isTauriRuntime() ? await saveGroup({ ...group, name: group.name.trim() || "Grupo sin nombre", updatedAt: now() }) : group;
     const conversation: ConversationRecord = { id: saved.id, title: saved.name, kind: "group", pinned: false, archived: false, lastMessagePreview: "", createdAt: saved.createdAt, updatedAt: saved.updatedAt };
@@ -171,7 +183,7 @@ export default function RoleplayApp() {
     <aside className="sidebar"><div className="brand-row"><div className="brand-mark"><WandSparkles size={18} /></div>{!collapsed && <div><strong>Local Character</strong><span>Roleplay con IA</span></div>}<button className="icon-button sidebar-toggle" onClick={() => setCollapsed((value) => !value)} aria-label="Contraer menú">{collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}</button></div><nav className="main-nav">{navItems.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${view === id ? "active" : ""}`} onClick={() => setView(id)} title={collapsed ? label : undefined}><Icon size={19} /><span>{!collapsed && label}</span></button>)}</nav>{!collapsed && <div className={`sidebar-footer runtime-${engine.runtimeState?.toLowerCase() ?? "stopped"}`} aria-live="polite"><div className={`backend-dot ${isReadyRuntime(engine.runtimeState) ? "ready" : isLoadingRuntime(engine.runtimeState) ? "loading" : engine.runtimeState === "ERROR" ? "error" : ""}`} />{isLoadingRuntime(engine.runtimeState) && <RefreshCw size={14} className="spin runtime-spinner" aria-hidden="true" />}<div><span>Motor de roleplay</span><strong>{isLoadingRuntime(engine.runtimeState) ? `Cargando ${engine.loadedModelName ?? "modelo"}…` : isReadyRuntime(engine.runtimeState) ? `${engine.loadedModelName ?? "Modelo"} listo` : engine.runtimeState === "ERROR" ? "Error al cargar modelo" : "Carga un modelo"}</strong></div></div>}</aside>
     <main className="main-content"><header className="topbar"><div><span className="eyebrow">ROLEPLAY CON PERSONAJES</span><h1>{navItems.find((item) => item.id === view)?.label}</h1></div><div className="topbar-actions"><span className="release-pill">0.1.0-alpha</span><button className="icon-button" onClick={() => void refresh()} disabled={busy} aria-label="Actualizar"><RefreshCw size={17} className={busy ? "spin" : ""} /></button></div></header>{error && <div className="error-banner"><CircleAlert size={17} /><span>{error}</span><button onClick={() => setError(null)}>Cerrar</button></div>}
       {view === "home" && <HomeView characters={characters} conversations={conversations} groups={groups} onChat={startChat} onOpenChat={(id) => { setActiveChat(id); setView("chats"); }} onOpenChats={() => setView("chats")} onOpenCharacters={() => setView("characters")} />}
-      {view === "chats" && <ChatsView characters={characters} conversations={conversations} groups={groups} providers={providers} engine={engine} activeChat={activeChat} setActiveChat={setActiveChat} onNewChat={startChat} onCreateGroup={createGroup} onDeleteGroup={async (id) => { if (isTauriRuntime()) { await deleteGroup(id); await deleteConversation(id); } setGroups((current) => current.filter((group) => group.id !== id)); setConversations((current) => current.filter((conversation) => conversation.id !== id)); if (activeChat === id) setActiveChat(null); }} onOpenCharacters={() => setView("characters")} />}
+      {view === "chats" && <ChatsViewWithDelete characters={characters} conversations={conversations} groups={groups} providers={providers} engine={engine} activeChat={activeChat} setActiveChat={setActiveChat} onDeleteConversation={removeConversation} onCreateGroup={createGroup} onDeleteGroup={async (id) => { if (isTauriRuntime()) { await deleteGroup(id); await deleteConversation(id); } setGroups((current) => current.filter((group) => group.id !== id)); setConversations((current) => current.filter((conversation) => conversation.id !== id)); if (activeChat === id) setActiveChat(null); }} onOpenCharacters={() => setView("characters")} />}
       {view === "explore" && <ExploreView remoteCharacters={remoteCharacters} filterCatalog={filterCatalog} onInstall={installRemote} onOpenSettings={() => setView("settings")} />}
       {view === "characters" && <CharactersView characters={characters} setCharacters={setCharacters} voices={voiceModels} onChat={startChat} onRepositoryAdded={syncRepository} onExplore={() => setView("explore")} />}
       {view === "models" && <ModelsApisPage models={models} providers={providers} engine={engine} hardware={hardware} onAddModel={() => void addLocalModel()} onLoad={load} onUnload={async () => { try { await unloadModel(); } catch (cause) { const message = cause instanceof Error ? cause.message : String(cause); setEngine((current) => ({ ...current, runtimeState: "ERROR", error: message })); setError(message); } }} onRemove={async (id) => { await removeModel(id); setModels((current) => current.filter((item) => item.id !== id)); }} onProviders={setProviders} />}
@@ -193,6 +205,47 @@ function ChatsView({ characters, conversations, groups, providers, engine, activ
   const filtered = conversations.filter((conversation) => ((conversation.kind?.trim().toLowerCase() || "direct") !== "direct" || Boolean(conversation.characterId && names.has(conversation.characterId))) && !(conversation.title.trim().toLowerCase() === "nuevo chat" && !conversation.characterId && !conversation.lastMessagePreview.trim()) && `${conversation.title} ${conversation.lastMessagePreview}`.toLowerCase().includes(query.toLowerCase()));
   if (activeChat) return <RoleplayChatScreenV2 chatId={activeChat} characters={characters} conversations={conversations} groups={groups} providers={providers} engine={engine} onBack={() => setActiveChat("")} onOpenCharacters={onOpenCharacters} />;
   return <section className="page-grid single-column"><div className="page-intro"><div><span className="eyebrow">ROLEPLAY</span><h2>Chats</h2><p>Elige una historia existente o empieza una conversación con uno de tus personajes.</p></div><div className="hero-actions"><button className="secondary-button" onClick={() => setShowGroup(true)}><Users size={17} /> Nuevo grupo</button><button className="primary-button" onClick={onOpenCharacters}><Plus size={17} /> Nuevo chat</button></div></div><div className="toolbar"><div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar chats" /></div><span className="toolbar-count">{filtered.length + groups.length} conversaciones</span></div><div className="chat-list-panel panel">{filtered.length === 0 && groups.length === 0 ? <EmptyState icon={<MessageCircle />} title="No hay conversaciones" text="Crea un chat desde Personajes o forma un grupo con el botón +." /> : <>{filtered.map((conversation) => { const character = conversation.characterId ? names.get(conversation.characterId) : undefined; return <button className={`conversation-row ${activeChat === conversation.id ? "selected" : ""}`} key={conversation.id} onClick={() => setActiveChat(conversation.id)}><Avatar path={character?.avatarPath} name={character?.name ?? conversation.title} /><div><strong>{character?.name ?? conversation.title}</strong><span>{conversation.lastMessagePreview || "Sin mensajes todavía"}</span></div><ChevronRight size={16} /></button>; })}{groups.length > 0 && <><h3 className="list-section-title">Grupos</h3>{groups.map((group) => <div className={`conversation-row ${activeChat === group.id ? "selected" : ""}`} key={group.id} role="button" tabIndex={0} onClick={() => setActiveChat(group.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setActiveChat(group.id); }}><div className="group-avatar"><Users size={19} /></div><div><strong>{group.name}</strong><span>{group.participantIds.length} personajes · {group.description || "Grupo de roleplay"}</span></div><button className="icon-button danger" onClick={(event) => { event.stopPropagation(); void onDeleteGroup(group.id); }} aria-label="Eliminar grupo"><Trash2 size={16} /></button></div>)}</>}</>}</div>{activeChat && <ChatPanel chatId={activeChat} characters={characters} conversations={conversations} groups={groups} providers={providers} engine={engine} />}{showGroup && <GroupDialog characters={characters} onCancel={() => setShowGroup(false)} onSave={async (group) => { await onCreateGroup(group); setShowGroup(false); }} />}</section>;
+}
+
+function ChatsViewWithDelete({ characters, conversations, groups, providers, engine, activeChat, setActiveChat, onDeleteConversation, onCreateGroup, onDeleteGroup, onOpenCharacters }: { characters: CharacterRecord[]; conversations: ConversationRecord[]; groups: GroupRecord[]; providers: ProviderRecord[]; engine: EngineStatus; activeChat: string | null; setActiveChat: (id: string) => void; onDeleteConversation: (id: string) => Promise<void>; onCreateGroup: (group: GroupRecord) => Promise<void>; onDeleteGroup: (id: string) => Promise<void>; onOpenCharacters: () => void }) {
+  const [query, setQuery] = useState("");
+  const [showGroup, setShowGroup] = useState(false);
+  const names = useMemo(() => new Map(characters.map((character) => [character.id, character])), [characters]);
+  const filtered = conversations
+    .filter((conversation) => ((conversation.kind?.trim().toLowerCase() || "direct") !== "direct" || Boolean(conversation.characterId && names.has(conversation.characterId))))
+    .filter((conversation) => !(conversation.title.trim().toLowerCase() === "nuevo chat" && !conversation.characterId && !conversation.lastMessagePreview.trim()))
+    .filter((conversation) => `${conversation.title} ${conversation.lastMessagePreview}`.toLowerCase().includes(query.toLowerCase()));
+
+  if (activeChat) {
+    return <RoleplayChatScreenV2 chatId={activeChat} characters={characters} conversations={conversations} groups={groups} providers={providers} engine={engine} onBack={() => setActiveChat("")} onOpenCharacters={onOpenCharacters} />;
+  }
+
+  const openFromKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>, id: string) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setActiveChat(id);
+    }
+  };
+
+  return <section className="page-grid single-column">
+    <div className="page-intro"><div><span className="eyebrow">ROLEPLAY</span><h2>Chats</h2><p>Elige una historia existente o empieza una conversación con uno de tus personajes.</p></div><div className="hero-actions"><button className="secondary-button" onClick={() => setShowGroup(true)}><Users size={17} /> Nuevo grupo</button><button className="primary-button" onClick={onOpenCharacters}><Plus size={17} /> Nuevo chat</button></div></div>
+    <div className="toolbar"><div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar chats" /></div><span className="toolbar-count">{filtered.length + groups.length} conversaciones</span></div>
+    <div className="chat-list-panel panel">
+      {filtered.length === 0 && groups.length === 0 ? <EmptyState icon={<MessageCircle />} title="No hay conversaciones" text="Crea un chat desde Personajes o forma un grupo con el botón +." /> : <>
+        {filtered.map((conversation) => {
+          const character = conversation.characterId ? names.get(conversation.characterId) : undefined;
+          return <div className={`conversation-row ${activeChat === conversation.id ? "selected" : ""}`} key={conversation.id} role="button" tabIndex={0} onClick={() => setActiveChat(conversation.id)} onKeyDown={(event) => openFromKeyboard(event, conversation.id)}>
+            <Avatar path={character?.avatarPath} name={character?.name ?? conversation.title} />
+            <div><strong>{character?.name ?? conversation.title}</strong><span>{conversation.lastMessagePreview || "Sin mensajes todavía"}</span></div>
+            <button className="icon-button danger" type="button" onClick={(event) => { event.stopPropagation(); void onDeleteConversation(conversation.id); }} aria-label={`Eliminar chat de ${character?.name ?? conversation.title}`} title="Eliminar chat"><Trash2 size={16} /></button>
+            <ChevronRight size={16} aria-hidden="true" />
+          </div>;
+        })}
+        {groups.length > 0 && <><h3 className="list-section-title">Grupos</h3>{groups.map((group) => <div className={`conversation-row ${activeChat === group.id ? "selected" : ""}`} key={group.id} role="button" tabIndex={0} onClick={() => setActiveChat(group.id)} onKeyDown={(event) => openFromKeyboard(event, group.id)}><div className="group-avatar"><Users size={19} /></div><div><strong>{group.name}</strong><span>{group.participantIds.length} personajes · {group.description || "Grupo de roleplay"}</span></div><button className="icon-button danger" type="button" onClick={(event) => { event.stopPropagation(); void onDeleteGroup(group.id); }} aria-label={`Eliminar grupo ${group.name}`} title="Eliminar grupo"><Trash2 size={16} /></button><ChevronRight size={16} aria-hidden="true" /></div>)}</>}
+      </>}
+    </div>
+    {showGroup && <GroupDialog characters={characters} onCancel={() => setShowGroup(false)} onSave={async (group) => { await onCreateGroup(group); setShowGroup(false); }} />}
+  </section>;
 }
 
 function ChatPanel({ chatId, characters, conversations, groups, providers, engine, onBack, prefill, onPrefillConsumed }: { chatId: string; characters: CharacterRecord[]; conversations: ConversationRecord[]; groups: GroupRecord[]; providers: ProviderRecord[]; engine: EngineStatus; onBack?: () => void; prefill?: string; onPrefillConsumed?: () => void }) {
@@ -413,8 +466,8 @@ function RoleplayCharacterEditor({ character, voices, onChange, onCancel, onSave
 
 function ModelsApisPage({ models, providers, engine, hardware, onAddModel, onLoad, onUnload, onRemove, onProviders }: { models: ModelRecord[]; providers: ProviderRecord[]; engine: EngineStatus; hardware: HardwareSnapshot | null; onAddModel: () => void; onLoad: (id: string) => Promise<void>; onUnload: () => Promise<void>; onRemove: (id: string) => Promise<void>; onProviders: (providers: ProviderRecord[]) => void }) {
   const [showProvider, setShowProvider] = useState(false);
-  const [providerKind, setProviderKind] = useState(apiCatalog[0].id);
-  const [displayName, setDisplayName] = useState("");
+  const [providerKind, setProviderKind] = useState("openrouter");
+  const [displayName, setDisplayName] = useState("OpenRouter");
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
