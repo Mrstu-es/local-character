@@ -605,6 +605,41 @@ impl RoleplayOutputSanitizer {
                     self.pending.drain(..leading_whitespace);
                     continue;
                 }
+                // Some models verbalize their internal status instead of
+                // returning a hidden reasoning field. Hold generic preambles
+                // until the first action or spoken line is available.
+                let generic_meta_prefixes = [
+                    "El modelo",
+                    "The model",
+                    "El sistema",
+                    "The system",
+                    "El asistente",
+                    "The assistant",
+                ];
+                if generic_meta_prefixes
+                    .iter()
+                    .any(|prefix| starts_with_ascii_case_insensitive(&self.pending, prefix))
+                {
+                    if let Some(index) = find_roleplay_start(&self.pending) {
+                        self.pending.drain(..index);
+                        trim_structural_separator(&mut self.pending);
+                        continue;
+                    }
+                    if let Some(index) = self.pending.find("\n\n") {
+                        self.pending.drain(..index + 2);
+                        continue;
+                    }
+                    if let Some(index) = self.pending.find(". ") {
+                        self.pending.drain(..index + 2);
+                        continue;
+                    }
+                    if final_chunk {
+                        self.pending.clear();
+                        self.leading_checked = true;
+                        continue;
+                    }
+                    break;
+                }
                 for prefix in ["System is thinking...", "System is thinking…"] {
                     if starts_with_ascii_case_insensitive(&self.pending, prefix) {
                         self.pending.drain(..prefix.len());
@@ -708,6 +743,12 @@ impl RoleplayOutputSanitizer {
                         "prompt:",
                         "Generation:",
                         "generation:",
+                        "El modelo",
+                        "The model",
+                        "El sistema",
+                        "The system",
+                        "El asistente",
+                        "The assistant",
                     ]
                     .iter()
                     .map(|prefix| *prefix)
@@ -818,8 +859,25 @@ impl RoleplayOutputSanitizer {
         for placeholder in ["{{char}}", "{{ char }}", "{{character}}", "{{ character }}"] {
             resolved = replace_ascii_case_insensitive(&resolved, placeholder, &self.character_name);
         }
-        resolved
+        normalize_roleplay_markup(&resolved)
     }
+}
+
+fn normalize_roleplay_markup(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut in_star_run = false;
+    for character in value.chars() {
+        if character == '*' {
+            if !in_star_run {
+                output.push('*');
+                in_star_run = true;
+            }
+        } else {
+            in_star_run = false;
+            output.push(character);
+        }
+    }
+    output
 }
 
 fn replace_ascii_case_insensitive(value: &str, needle: &str, replacement: &str) -> String {
@@ -845,6 +903,12 @@ fn find_any(value: &str, needles: &[&str]) -> Option<(usize, usize)> {
         .iter()
         .filter_map(|needle| value.find(needle).map(|index| (index, needle.len())))
         .min_by_key(|(index, _)| *index)
+}
+
+fn find_roleplay_start(value: &str) -> Option<usize> {
+    value
+        .char_indices()
+        .find_map(|(index, character)| matches!(character, '*' | '"' | '“' | '«').then_some(index))
 }
 
 fn find_tag<'a>(value: &str, tags: &'a [(&'a str, bool)]) -> Option<(usize, &'a str, bool)> {
@@ -1280,14 +1344,14 @@ mod tests {
     use super::RoleplayOutputSanitizer;
 
     #[test]
-    fn sanitizer_holds_split_reasoning_tags_and_preserves_markdown() {
+    fn sanitizer_holds_split_reasoning_tags_and_normalizes_actions() {
         let mut sanitizer = RoleplayOutputSanitizer::new(Some("Tsuyu"), Some("Tadeo"));
         assert!(sanitizer.push("<thi").is_empty());
         assert!(sanitizer.push("nking>private</thinking>").is_empty());
         let visible = sanitizer.push("**mira alrededor**\\n\\\"Hola\\\"");
         let mut result = visible.join("");
         result.push_str(&sanitizer.finish().join(""));
-        assert_eq!(result, "**mira alrededor**\\n\\\"Hola\\\"");
+        assert_eq!(result, "*mira alrededor*\\n\\\"Hola\\\"");
     }
 
     #[test]
@@ -1336,5 +1400,15 @@ mod tests {
             .join("");
         result.push_str(&sanitizer.finish().join(""));
         assert_eq!(result, "*Tsuyu se acerca.*");
+    }
+
+    #[test]
+    fn sanitizer_hides_natural_language_reasoning_preamble() {
+        let mut sanitizer = RoleplayOutputSanitizer::new(Some("Tsuyu Asui"), Some("Tadeo"));
+        let mut result = sanitizer
+            .push("El modelo está considerando cómo responder a esta solicitud específica. A continuación, verás cómo se desarrolla esta conversación entre el modelo y el usuario. **Tsuyu se detiene.**")
+            .join("");
+        result.push_str(&sanitizer.finish().join(""));
+        assert_eq!(result, "*Tsuyu se detiene.*");
     }
 }
