@@ -57,6 +57,7 @@ import {
   stopGeneration,
   unloadModel,
 } from "./lib/tauri";
+import { normalizeRoleplayText } from "./chat/templateVariables";
 
 const formatBytes = (bytes?: number) => {
   if (!bytes || bytes < 1) return "—";
@@ -275,7 +276,7 @@ function ChatView({ engine, setError }: { engine: EngineStatus; setError: (value
         }
         setConversationId(records[0].id);
         const stored = await listMessages(records[0].id);
-        setMessages(stored.map((message) => ({ id: message.id, role: message.role, content: message.content, createdAt: Date.parse(message.createdAt) || Date.now() })));
+        setMessages(stored.map((message) => ({ id: message.id, role: message.role, content: message.role === "assistant" ? normalizeRoleplayText(message.content) : message.content, createdAt: Date.parse(message.createdAt) || Date.now() })));
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
@@ -292,15 +293,16 @@ function ChatView({ engine, setError }: { engine: EngineStatus; setError: (value
     void listenToGeneration((event) => {
       if (event.generationId !== activeGenerationRef.current) return;
       const assistantId = assistantForGeneration.current.get(event.generationId) ?? event.generationId;
-      assistantContent.current.set(assistantId, `${assistantContent.current.get(assistantId) ?? ""}${event.text}`);
-      setMessages((current) => current.map((message) => message.id === assistantId ? { ...message, content: message.content + event.text } : message));
+      const raw = `${assistantContent.current.get(assistantId) ?? ""}${event.text}`;
+      assistantContent.current.set(assistantId, raw);
+      setMessages((current) => current.map((message) => message.id === assistantId ? { ...message, content: normalizeRoleplayText(raw) } : message));
     }, (event) => {
       if (event.generationId !== activeGenerationRef.current) return;
       setGenerating(false);
       setActiveGeneration(null);
       const assistantId = assistantForGeneration.current.get(event.generationId) ?? event.generationId;
       const assistant = messagesRef.current.find((message) => message.id === assistantId);
-      const content = assistantContent.current.get(assistantId) ?? assistant?.content ?? "";
+      const content = normalizeRoleplayText(assistantContent.current.get(assistantId) ?? assistant?.content ?? "");
       if (assistant && conversationId) {
         void saveMessage({ id: assistant.id, conversationId, role: "assistant", content, pinned: false, metadataJson: "{}", createdAt: new Date(assistant.createdAt).toISOString() }).catch(() => undefined);
       }
