@@ -85,7 +85,7 @@ class PromptBuilder(
         val matchedLore = loreMatcher.match(request.loreEntries, recentText)
 
         val rawEssential = buildList {
-            add("SYSTEM\nYou are roleplaying as ${character.name}. Stay consistent, remain fully in character, and never decide the user's actions.")
+            add("SYSTEM\nYou are roleplaying as ${character.name}. Stay consistent, remain fully in character, and never decide the user's actions. Reply directly as the character without mentioning the model, prompts, reasoning, or generation process. Use clean roleplay formatting: actions between single asterisks and dialogue in natural paragraphs, with a blank line between action and dialogue. Never emit double-asterisk action blocks, control tokens, or meta commentary.")
             request.responseLanguage?.takeIf(String::isNotBlank)?.let {
                 add("RESPONSE LANGUAGE\nAlways answer in $it, while preserving the character's natural voice.")
             }
