@@ -6,6 +6,8 @@ import {
   deleteMessage,
   isTauriRuntime,
   listMessages,
+  getConversationSummary,
+  saveConversationSummary,
   listenToGeneration,
   rewindToMessage,
   saveMessage,
@@ -15,6 +17,7 @@ import {
 import MessageActionsMenu from "./MessageActionsMenu";
 import MessageItem, { CharacterStreamingItem } from "./MessageItem";
 import { buildRoleplaySystemPrompt, roleplayHistory } from "./promptBuilder";
+import { buildContinuityContext, estimateTokens, type ContinuityContext } from "./continuity";
 import { conversationUserName, TemplateVariableResolver } from "./templateVariables";
 
 interface ChatPanelModernProps {
@@ -85,6 +88,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
   const templateResolver = useMemo(() => new TemplateVariableResolver({ userName, characterName: character?.name ?? fallbackGroupCharacter?.name }), [userName, character?.name, fallbackGroupCharacter?.name]);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [memories, setMemories] = useState<string[]>([]);
+  const [conversationSummary, setConversationSummary] = useState<import("../types").ConversationSummaryRecord | null>(null);
   const [draft, setDraft] = useState("");
   const [actionMode, setActionMode] = useState(false);
   const [generationState, setGenerationState] = useState<GenerationState | null>(null);
@@ -101,6 +105,8 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
   const assistantIds = useRef(new Map<string, string>());
   const assistantContent = useRef(new Map<string, string>());
   const assistantRecords = useRef(new Map<string, ChatMessageRecord>());
+  const messageRecordsRef = useRef<ChatMessageRecord[]>([]);
+  const summaryRef = useRef<import("../types").ConversationSummaryRecord | null>(null);
   const lastUserMessage = useRef<ChatMessageRecord | null>(null);
   const lastGenerationMode = useRef<"send" | "continue">("send");
   const [activePlaybackMessageId, setActivePlaybackMessageId] = useState<string | null>(null);
@@ -112,6 +118,14 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
   useEffect(() => {
     onGeneratingChange?.(Boolean(isGenerating));
   }, [isGenerating, onGeneratingChange]);
+
+  useEffect(() => {
+    messageRecordsRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    summaryRef.current = conversationSummary;
+  }, [conversationSummary]);
 
   // A chat screen can be reused for another character while a previous turn
   // is still mounted. Never let its assistant maps or typing state leak into
@@ -126,6 +140,9 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     assistantRecords.current.clear();
     setError(null);
     setRetryAvailable(false);
+    setConversationSummary(null);
+    summaryRef.current = null;
+    messageRecordsRef.current = [];
     lastUserMessage.current = null;
     setGreetingHidden(false);
   }, [chatId]);
@@ -133,6 +150,29 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
   const notify = useCallback((message: string) => {
     onNotice?.(message);
   }, [onNotice]);
+
+  const persistContinuitySummary = useCallback(async (transcript: ChatMessageRecord[]) => {
+    if (!isTauriRuntime() || !conversationId || transcript.length < 8) return;
+    const configuredContext = Number(localStorage.getItem("local-character.desktop.context") ?? "8192");
+    const modelContext = Number(engine.contextLength ?? configuredContext);
+    const contextLimit = Math.max(1024, Math.min(Number.isFinite(configuredContext) ? configuredContext : 8192, Number.isFinite(modelContext) && modelContext > 0 ? modelContext : 8192));
+    const result = buildContinuityContext({
+      conversationId,
+      characterId: character?.id ?? fallbackGroupCharacter?.id,
+      groupId: group?.id,
+      messages: transcript,
+      summary: summaryRef.current,
+      memories,
+      contextLimit,
+      reserveOutput: 512,
+      systemTokenReserve: 2200,
+    });
+    if (result.summaryToPersist) {
+      summaryRef.current = result.summaryToPersist;
+      setConversationSummary(result.summaryToPersist);
+      await saveConversationSummary(result.summaryToPersist).catch(() => undefined);
+    }
+  }, [character?.id, conversationId, engine.contextLength, fallbackGroupCharacter?.id, group?.id, memories]);
 
   const finishGeneration = useCallback((status: "COMPLETED" | "CANCELLED" | "ERROR", failure?: string, finishReason?: string) => {
     const current = generationStateRef.current;
@@ -144,11 +184,16 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     const finalMetadata = record ? { ...metadataFor(record), generationStatus: status.toLowerCase(), finishReason: finishReason ?? status.toLowerCase(), completedAt: now() } : undefined;
     if (status === "COMPLETED" && content.trim() && record) {
       const completed = { ...record, content, metadataJson: JSON.stringify(finalMetadata) };
-      setMessages((items) => items.map((item) => item.id === assistantId ? completed : item));
+      const nextMessages = messageRecordsRef.current.map((item) => item.id === assistantId ? completed : item);
+      messageRecordsRef.current = nextMessages;
+      setMessages(nextMessages);
       if (isTauriRuntime()) void saveMessage(completed);
+      void persistContinuitySummary(nextMessages);
     } else if (content.trim() && record) {
       const partial = { ...record, content, metadataJson: JSON.stringify(finalMetadata) };
-      setMessages((items) => items.map((item) => item.id === assistantId ? partial : item));
+      const nextMessages = messageRecordsRef.current.map((item) => item.id === assistantId ? partial : item);
+      messageRecordsRef.current = nextMessages;
+      setMessages(nextMessages);
       if (isTauriRuntime()) void saveMessage(partial);
     } else {
       setMessages((items) => items.filter((item) => item.id !== assistantId));
@@ -171,7 +216,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     assistantContent.current.delete(current.generationId);
     if (finalError) setError(finalError);
     setRetryAvailable(Boolean(finalError));
-  }, [templateResolver]);
+  }, [persistContinuitySummary, templateResolver]);
 
   // Safety net only: normal completion comes from the backend terminal event.
   // A stalled provider must never leave the UI in an infinite writing state.
@@ -187,10 +232,11 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     if (!isTauriRuntime() || !conversationId) {
       setMessages([]);
       setMemories([]);
+      setConversationSummary(null);
       return;
     }
     try {
-      const loaded = await listMessages(conversationId);
+      const [loaded, savedSummary] = await Promise.all([listMessages(conversationId), getConversationSummary(conversationId)]);
       const normalized = loaded.map((message) => ({ ...message, content: message.role === "assistant" ? templateResolver.cleanGeneratedContent(message.content) : templateResolver.resolve(message.content) }));
       const renderable = normalized.filter(isRenderableMessage);
       const changed = normalized.filter((message, index) => message.content !== loaded[index].content);
@@ -201,7 +247,10 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
       // para que no reaparezca al volver a abrir la conversación.
       const ghosts = normalized.filter((message) => message.role === "assistant" && !message.content.trim());
       if (isTauriRuntime()) await Promise.all(ghosts.map((message) => deleteMessage(message.id).catch(() => undefined)));
+      messageRecordsRef.current = renderable;
       setMessages(renderable);
+      setConversationSummary(savedSummary);
+      summaryRef.current = savedSummary;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -289,15 +338,6 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
   } : null, [character, conversation, chatId, templateResolver]);
   const visibleMessages = messages.length > 0 ? messages : greetingMessage && !greetingHidden ? [greetingMessage] : [];
   const selectedMessage = messages.find((message) => message.id === selectedMessageId) ?? (greetingMessage?.id === selectedMessageId ? greetingMessage : undefined);
-  const roleplaySystemPrompt = useMemo(() => buildRoleplaySystemPrompt({
-    character,
-    group,
-    characters,
-    userName,
-    language: localStorage.getItem("local-character.desktop.language") ?? "es",
-    memories,
-  }), [character, group, characters, memories, userName]);
-
   const scrollToEnd = useCallback((behavior: ScrollBehavior = "smooth") => {
     const node = messagesRef.current;
     if (!node) return;
@@ -473,7 +513,9 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     const user: ChatMessageRecord | null = userId ? { id: userId, conversationId, role: "user", content, pinned: false, metadataJson: JSON.stringify({ source: "user", messageType: "user" }), createdAt: now() } : null;
     const assistantMetadata = { senderCharacterId: character?.id ?? fallbackGroupCharacter?.id, source: "character", messageType: "character", generated: true };
     const assistant: ChatMessageRecord = { id: assistantId, conversationId, role: "assistant", content: "", pinned: false, metadataJson: JSON.stringify(assistantMetadata), createdAt: now() };
-    setMessages((current) => [...(initial ? [initial] : current), ...(user ? [user] : []), assistant]);
+    const optimisticMessages = [...(initial ? [initial] : messageRecordsRef.current), ...(user ? [user] : []), assistant];
+    messageRecordsRef.current = optimisticMessages;
+    setMessages(optimisticMessages);
     setDraft("");
     setActionMode(false);
     setError(null);
@@ -498,8 +540,62 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
       finishGeneration("ERROR", cause instanceof Error ? cause.message : String(cause));
       return;
     }
-    const history = roleplayHistory(messages, initial, user, templateResolver);
-    const protocolMessages = [{ role: "system" as const, content: roleplaySystemPrompt }, ...history, ...(wantsContinue ? [{ role: "user" as const, content: "Continue the scene naturally from the current context as the character. Do not speak for the user." }] : [])];
+    const configuredContext = Number(localStorage.getItem("local-character.desktop.context") ?? "8192");
+    const modelContext = Number(engine.contextLength ?? configuredContext);
+    const contextLimit = Math.max(1024, Math.min(Number.isFinite(configuredContext) ? configuredContext : 8192, Number.isFinite(modelContext) && modelContext > 0 ? modelContext : 8192));
+    const continuityInput = {
+      conversationId,
+      characterId: character?.id ?? fallbackGroupCharacter?.id,
+      groupId: group?.id,
+      messages,
+      greeting: initial,
+      currentMessage: user,
+      summary: summaryRef.current,
+      memories,
+      contextLimit,
+      reserveOutput: 512,
+      systemTokenReserve: 2200,
+    } as const;
+    let continuityBuild = buildContinuityContext(continuityInput);
+    let continuity: ContinuityContext = continuityBuild.context;
+    let roleplaySystemPrompt = buildRoleplaySystemPrompt({
+      character,
+      group,
+      characters,
+      userName,
+      language: localStorage.getItem("local-character.desktop.language") ?? "es",
+      memories: continuity.relevantMemories,
+      continuity,
+      continueGeneration: wantsContinue,
+    });
+    // The character card can be much larger than a normal prompt. Rebuild the
+    // history selection once with the real system size so the context window
+    // is never consumed by a blind fixed message count.
+    const systemTokens = estimateTokens(roleplaySystemPrompt);
+    if (systemTokens > continuityInput.systemTokenReserve && systemTokens + 512 + continuity.tokenEstimate > contextLimit) {
+      continuityBuild = buildContinuityContext({ ...continuityInput, systemTokenReserve: systemTokens + 96 });
+      continuity = continuityBuild.context;
+      roleplaySystemPrompt = buildRoleplaySystemPrompt({
+        character,
+        group,
+        characters,
+        userName,
+        language: localStorage.getItem("local-character.desktop.language") ?? "es",
+        memories: continuity.relevantMemories,
+        continuity,
+        continueGeneration: wantsContinue,
+      });
+    }
+    if (continuityBuild.summaryToPersist && isTauriRuntime()) {
+      summaryRef.current = continuityBuild.summaryToPersist;
+      setConversationSummary(continuityBuild.summaryToPersist);
+      void saveConversationSummary(continuityBuild.summaryToPersist).catch(() => undefined);
+    }
+    const history = roleplayHistory(continuity.recentMessages, null, undefined, templateResolver);
+    // Continue is a generation mode, not a fake user turn. The exact
+    // instruction lives in the system context and the transcript keeps its
+    // real user/assistant roles intact for local and remote providers.
+    const protocolMessages = [{ role: "system" as const, content: roleplaySystemPrompt }, ...history];
     if (import.meta.env.DEV) {
       localStorage.setItem("local-character.desktop.lastPrompt", JSON.stringify({
         characterId: character?.id ?? null,
@@ -514,6 +610,16 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
         messages: protocolMessages,
         memoryCount: memories.length,
         loreCount: character?.lore?.length ?? 0,
+        continuity: {
+          currentTopic: continuity.currentTopic,
+          currentSituation: continuity.currentSituation,
+          currentLocation: continuity.currentLocation,
+          summaryUntilMessageId: continuity.summaryUntilMessageId ?? null,
+          recentMessagesCount: continuity.recentMessageCount,
+          relevantMemoryCount: continuity.relevantMemories.length,
+          estimatedTokens: continuity.tokenEstimate,
+          continueGeneration: wantsContinue,
+        },
       }));
     }
     if (provider) {
@@ -542,7 +648,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
       // GPU is the default when the user has not explicitly selected CPU in
       // Ajustes. -1 tells llama.cpp to offload every layer that fits in VRAM;
       // any remainder is handled by the CPU automatically.
-      await sendChatMessage({ prompt: roleplaySystemPrompt, messages: protocolMessages, characterName: character?.name ?? fallbackGroupCharacter?.name, userName, generationId, conversationId, messageId: assistantId, maxOutput: 512, context: Number(localStorage.getItem("local-character.desktop.context") ?? "8192"), gpuLayers: Number(localStorage.getItem("local-character.desktop.gpuLayers") ?? "-1") });
+      await sendChatMessage({ prompt: roleplaySystemPrompt, messages: protocolMessages, characterName: character?.name ?? fallbackGroupCharacter?.name, userName, generationId, conversationId, messageId: assistantId, maxOutput: 512, context: contextLimit, gpuLayers: Number(localStorage.getItem("local-character.desktop.gpuLayers") ?? "-1") });
     } catch (cause) {
       finishGeneration("ERROR", cause instanceof Error ? cause.message : String(cause));
     }

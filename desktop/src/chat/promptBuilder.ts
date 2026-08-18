@@ -1,4 +1,5 @@
 import type { CharacterRecord, ChatMessageRecord, GroupRecord } from "../types";
+import { continuityPromptSection, type ContinuityContext } from "./continuity";
 import { normalizeRoleplayText, TemplateVariableResolver } from "./templateVariables";
 
 export interface RoleplayPromptInput {
@@ -8,6 +9,8 @@ export interface RoleplayPromptInput {
   userName?: string;
   language?: string;
   memories?: string[];
+  continuity?: ContinuityContext;
+  continueGeneration?: boolean;
 }
 
 function text(value?: string): string {
@@ -66,6 +69,7 @@ export function buildRoleplaySystemPrompt(input: RoleplayPromptInput): string {
     `Alternate greetings (style reference only): ${resolver.resolveList(character?.alternateGreetings).join("\n") || "(none)"}`,
     `Group context: ${participants ? `${resolver.resolve(text(group?.description)) || "Shared roleplay group"}. Participants: ${participants}. Preserve each participant's identity.` : "(direct conversation)"}`,
     `Group system instructions: ${resolver.resolve(text(group?.systemPrompt)) || "(none)"}`,
+    ...(input.continuity ? ["", continuityPromptSection(input.continuity, input.continueGeneration)] : []),
     "",
     "EXAMPLE DIALOGUE (style reference only; never repeat it as the current answer)",
     resolver.resolve(text(character?.exampleMessages)) || "(none)",
