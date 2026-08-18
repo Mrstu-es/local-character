@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc --noEmit && vite build",
+    "test:continuity": "node --experimental-strip-types scripts/continuity-smoke.mts",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
