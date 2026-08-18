@@ -1,7 +1,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { CharacterRecord, ChatMessageRecord, ConversationRecord, EngineLog, EngineStatus, ExploreFilterCatalog, GenerationStats, GroupRecord, HardwareSnapshot, ModelRecord, ProviderRecord, RemoteCharacterRecord, RepositoryProbe, RepositorySourceRecord, RepositorySyncResult, SuspiciousMessageRecord, VoiceModelRecord, VoiceRepositoryRecord, VoiceRepositorySyncResult } from "../types";
+import type { CharacterRecord, ChatMessageRecord, ConversationRecord, ConversationSummaryRecord, EngineLog, EngineStatus, ExploreFilterCatalog, GenerationStats, GroupRecord, HardwareSnapshot, ModelRecord, ProviderRecord, RemoteCharacterRecord, RepositoryProbe, RepositorySourceRecord, RepositorySyncResult, SuspiciousMessageRecord, VoiceModelRecord, VoiceRepositoryRecord, VoiceRepositorySyncResult } from "../types";
 
 export const isTauriRuntime = () => Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 
@@ -179,6 +179,14 @@ export async function deleteConversation(id: string): Promise<void> {
 
 export async function listMessages(conversationId: string): Promise<ChatMessageRecord[]> {
   return invoke<ChatMessageRecord[]>("list_messages", { conversationId });
+}
+
+export async function getConversationSummary(conversationId: string): Promise<ConversationSummaryRecord | null> {
+  return invoke<ConversationSummaryRecord | null>("get_conversation_summary", { conversationId });
+}
+
+export async function saveConversationSummary(summary: ConversationSummaryRecord): Promise<ConversationSummaryRecord> {
+  return invoke<ConversationSummaryRecord>("save_conversation_summary", { summary });
 }
 
 export async function saveMessage(message: ChatMessageRecord): Promise<ChatMessageRecord> {
