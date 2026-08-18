@@ -6,9 +6,11 @@ export interface TemplateVariableContext {
 const META_PREFIX = /^(?:\s*)(?:(?:el\s+(?:modelo|sistema|asistente)|the\s+(?:model|system|assistant)|la\s+ia|the\s+ai|la\s+inteligencia\s+artificial|artificial\s+intelligence|system)\b|step[- ]by[- ]step\s+reasoning|chain[- ]of[- ]thought|reasoning\s+process|razonamiento\s+paso\s+a\s+paso|proceso\s+de\s+razonamiento|pensamiento\s+paso\s+a\s+paso|let(?:'|’)?s\s+think|let\s+me\s+think|voy\s+a\s+analizar)/i;
 const META_LINE = /^(?:\s*)(?:(?:el\s+(?:modelo|sistema|asistente)|the\s+(?:model|system|assistant)|la\s+ia|the\s+ai|la\s+inteligencia\s+artificial|artificial\s+intelligence|system)\b|step[- ]by[- ]step\s+reasoning|chain[- ]of[- ]thought|reasoning\s+process|razonamiento\s+paso\s+a\s+paso|proceso\s+de\s+razonamiento|pensamiento\s+paso\s+a\s+paso|let(?:'|’)?s\s+think|let\s+me\s+think|voy\s+a\s+analizar|(?:thinking|reasoning|analysis|prompt|generation|assistant|developer|user)\s*:)/i;
 
+const CONTINUITY_META = /^(?:\s*)(?:continuity\s+context|contexto\s+de\s+continuidad|current\s+(?:topic|situation|location)|earlier\s+conversation\s+summary|recent\s+meaningful\s+actions|unresolved\s+questions|pending\s+events|recent\s+speakers|tema\s+actual|situaci[oó]n\s+actual|resumen\s+de\s+la\s+conversaci[oó]n|eventos\s+pendientes)/i;
+
 function stripMetaPrefix(value: string): string {
   const leading = value.trimStart();
-  if (!META_PREFIX.test(leading)) return value;
+  if (!META_PREFIX.test(leading) && !CONTINUITY_META.test(leading)) return value;
 
   // Reasoning models often emit a natural-language preamble instead of
   // <think> tags. Keep only the first action or spoken line.
@@ -40,7 +42,7 @@ export function normalizeRoleplayText(value?: string | null): string {
   cleaned = stripMetaPrefix(cleaned);
   cleaned = cleaned
     .split("\n")
-    .filter((line) => !META_LINE.test(line.trim()))
+    .filter((line) => !META_LINE.test(line.trim()) && !CONTINUITY_META.test(line.trim()))
     .join("\n");
   cleaned = cleaned.replace(/(?:^|\n)\s*(?:por favor,? (?:ten|tenga) paciencia|please wait|generating response|generating a response)[^\n]*(?=\n|$)/giu, "\n");
   cleaned = cleaned.replace(/(?:^|\n)\s*(?:system|assistant|user|developer|thinking|reasoning|analysis|prompt|generation)\s*:\s*/giu, "\n");
