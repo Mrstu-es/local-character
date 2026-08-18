@@ -126,6 +126,15 @@ export interface ChatMessageRecord {
   editedAt?: string;
 }
 
+export interface ConversationSummaryRecord {
+  conversationId: string;
+  summary: string;
+  summaryUntilMessageId?: string;
+  messageCount: number;
+  tokenCount: number;
+  updatedAt: string;
+}
+
 export interface SuspiciousMessageRecord extends ChatMessageRecord {
   reason: string;
 }
