@@ -3,8 +3,8 @@ export interface TemplateVariableContext {
   characterName?: string;
 }
 
-const META_PREFIX = /^(?:\s*)(?:el\s+(?:modelo|sistema|asistente)|the\s+(?:model|system|assistant)|system)\b/i;
-const META_LINE = /^(?:\s*)(?:(?:el\s+(?:modelo|sistema|asistente)|the\s+(?:model|system|assistant)|system)\b|(?:thinking|reasoning|analysis|prompt|generation|assistant|developer|user)\s*:)/i;
+const META_PREFIX = /^(?:\s*)(?:(?:el\s+(?:modelo|sistema|asistente)|the\s+(?:model|system|assistant)|la\s+ia|the\s+ai|la\s+inteligencia\s+artificial|artificial\s+intelligence|system)\b|step[- ]by[- ]step\s+reasoning|chain[- ]of[- ]thought|reasoning\s+process|razonamiento\s+paso\s+a\s+paso|proceso\s+de\s+razonamiento|pensamiento\s+paso\s+a\s+paso|let(?:'|’)?s\s+think|let\s+me\s+think|voy\s+a\s+analizar)/i;
+const META_LINE = /^(?:\s*)(?:(?:el\s+(?:modelo|sistema|asistente)|the\s+(?:model|system|assistant)|la\s+ia|the\s+ai|la\s+inteligencia\s+artificial|artificial\s+intelligence|system)\b|step[- ]by[- ]step\s+reasoning|chain[- ]of[- ]thought|reasoning\s+process|razonamiento\s+paso\s+a\s+paso|proceso\s+de\s+razonamiento|pensamiento\s+paso\s+a\s+paso|let(?:'|’)?s\s+think|let\s+me\s+think|voy\s+a\s+analizar|(?:thinking|reasoning|analysis|prompt|generation|assistant|developer|user)\s*:)/i;
 
 function stripMetaPrefix(value: string): string {
   const leading = value.trimStart();
@@ -87,7 +87,7 @@ export class TemplateVariableResolver {
 
   cleanGeneratedContent(value?: string | null): string {
     let cleaned = this.resolve(value).trim();
-    cleaned = cleaned.replace(/^(?:system\s+is\s+thinking|el\s+modelo\s+est(?:a|\u00e1)\s+(?:pensando|considerando|razonando|generando)|the\s+model\s+is\s+(?:thinking|considering|reasoning|generating))[\s\S]*?(?=\*{1,3}(?=\S)|["“«]|$)/iu, "");
+    cleaned = cleaned.replace(/^(?:system\s+is\s+thinking|(?:el\s+modelo|la\s+ia|la\s+inteligencia\s+artificial)\s+est(?:a|\u00e1)\s+(?:pensando|considerando|razonando|generando)|(?:the\s+model|the\s+ai|artificial\s+intelligence)\s+is\s+(?:thinking|considering|reasoning|generating))[\s\S]*?(?=\*{1,3}(?=\S)|["“«]|$)/iu, "");
     const orphanReasoningClose = cleaned.search(/<\/(?:think|thinking|analysis)>/iu);
     if (orphanReasoningClose >= 0 && !/<(?:think|thinking|analysis)>/iu.test(cleaned.slice(0, orphanReasoningClose))) {
       cleaned = cleaned.slice(orphanReasoningClose).replace(/^<\/(?:think|thinking|analysis)>/iu, "").trimStart();
