@@ -16,6 +16,7 @@ import com.localcharacter.app.domain.conversation.ComposerMode
 import com.localcharacter.app.domain.conversation.ContentPolicyResolver
 import com.localcharacter.app.domain.conversation.GenerationMode
 import com.localcharacter.app.domain.conversation.TtsTextSanitizer
+import com.localcharacter.app.domain.conversation.RoleplayTextFormatter
 import com.localcharacter.app.domain.model.VoiceAutoplayOverride
 import com.localcharacter.app.tts.TtsManager
 import com.localcharacter.app.tts.TtsSynthesisSettings
@@ -82,6 +83,7 @@ class ChatViewModel(
     private val messageLimit = MutableStateFlow(ChatListPolicy.INITIAL_LIMIT)
     private val totalMessageCount = MutableStateFlow(0)
     val messages = messageLimit.flatMapLatest { limit -> container.chats.messages(conversationId, limit) }
+        .map { rows -> rows.map { message -> if (message.role == MessageRole.CHARACTER) message.copy(content = RoleplayTextFormatter.normalize(message.content)) else message } }
         .onEach { rows ->
             if (AppBuildInfo.DEBUG) Log.d(PERFORMANCE_TAG, "Room emitió ${rows.size} mensajes para chat=$conversationId")
         }
@@ -385,7 +387,7 @@ class ChatViewModel(
                         val attempt = executeProviderAttempt(selection, request) { token ->
                             receivedFirstToken = true
                             streamingBuffer.append(token, SystemClock.elapsedRealtime())?.let { content ->
-                                mutableStreamingMessage.value = response.copy(content = content)
+                                mutableStreamingMessage.value = response.copy(content = RoleplayTextFormatter.normalize(content))
                             }
                         }
                         usedSelection = selection
@@ -418,7 +420,7 @@ class ChatViewModel(
                 mutableError.value = error.message ?: "La inferencia se interrumpió."
             }
 
-            val finalContent = streamingBuffer.completed()
+            val finalContent = RoleplayTextFormatter.normalize(streamingBuffer.completed())
             if (finalContent.isNotBlank()) {
                 val completedResponse = response.copy(content = finalContent, isComplete = true)
                 mutableStreamingMessage.value = completedResponse
