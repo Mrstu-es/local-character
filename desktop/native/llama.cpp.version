@@ -1,0 +1,6 @@
+tag=b10218
+commit=de69995
+release_date=2026-08-01
+source=https://github.com/ggml-org/llama.cpp
+backends=cpu,cuda,vulkan
+notes=Commit de release fijado; no usar HEAD automáticamente. Los binarios/backends se preparan por scripts para Windows x64.
