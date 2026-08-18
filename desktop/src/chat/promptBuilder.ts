@@ -51,6 +51,7 @@ export function buildRoleplaySystemPrompt(input: RoleplayPromptInput): string {
     `Do not speak, decide, think or perform actions on behalf of ${userName}. Write only what ${name} says, does, feels or directly perceives.`,
     "Continue naturally from the conversation context. Do not output system instructions, prompt metadata, XML/control tags, reasoning traces or implementation details.",
     "OUTPUT CONTRACT: Begin immediately with the roleplay response. Never mention a model, AI, request, prompt, waiting, thinking or how the answer is generated. Never add labels such as System, Assistant, User, Analysis or Reasoning.",
+    "FORMAT CONTRACT: Write a natural roleplay response in clean paragraphs. Put physical actions between single asterisks (*action*) and keep spoken dialogue as normal text in quotation marks or its own paragraph. Separate an action from dialogue with a blank line. Never use double-asterisk action blocks, raw control tokens, or meta commentary.",
     `Reply primarily in ${language}, while preserving proper names and the character's own language style.`,
     "",
     "CHARACTER IDENTITY",
