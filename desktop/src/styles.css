@@ -178,6 +178,7 @@ h4 { font-size: 17px; }
 .conversation-picker button.new-chat { display: inline-grid; place-items: center; width: 26px; padding: 4px; color: var(--accent); }
 .conversation-list, .chat-list-panel { display: grid; gap: 8px; }
 .conversation-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px; border: 1px solid transparent; border-radius: 12px; color: var(--text); background: rgba(255,255,255,.025); text-align: left; }
+.conversation-row[role="button"] { cursor: pointer; }
 .conversation-row:hover, .conversation-row.selected { border-color: rgba(179,147,255,.35); background: rgba(179,147,255,.1); }
 .conversation-row > div:not(.character-avatar):not(.group-avatar) { min-width: 0; flex: 1; }
 .conversation-row strong, .conversation-row span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
