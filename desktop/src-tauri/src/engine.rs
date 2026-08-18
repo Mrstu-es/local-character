@@ -298,6 +298,11 @@ impl LocalLlmEngine for EngineRuntime {
                 "--parallel",
                 "1",
                 "--no-ui",
+                // Roleplay must expose only the character response. Models
+                // such as Qwen3 otherwise default to chain-of-thought output
+                // even when the client sends enable_thinking=false.
+                "--reasoning",
+                "off",
                 "--log-verbosity",
                 "1",
             ])
@@ -615,6 +620,21 @@ impl RoleplayOutputSanitizer {
                     "The system",
                     "El asistente",
                     "The assistant",
+                    "La IA",
+                    "The AI",
+                    "La inteligencia artificial",
+                    "Artificial intelligence",
+                    "Step-by-step reasoning",
+                    "Step by step reasoning",
+                    "Chain-of-thought",
+                    "Chain of thought",
+                    "Reasoning process",
+                    "Razonamiento paso a paso",
+                    "Proceso de razonamiento",
+                    "Pensamiento paso a paso",
+                    "Let's think",
+                    "Let me think",
+                    "Voy a analizar",
                 ];
                 if generic_meta_prefixes
                     .iter()
@@ -625,14 +645,10 @@ impl RoleplayOutputSanitizer {
                         trim_structural_separator(&mut self.pending);
                         continue;
                     }
-                    if let Some(index) = self.pending.find("\n\n") {
-                        self.pending.drain(..index + 2);
-                        continue;
-                    }
-                    if let Some(index) = self.pending.find(". ") {
-                        self.pending.drain(..index + 2);
-                        continue;
-                    }
+                    // Keep the whole preamble buffered. Dropping only the first
+                    // sentence would expose a second sentence such as
+                    // "A continuación..." before the roleplay marker arrives
+                    // in a later SSE chunk.
                     if final_chunk {
                         self.pending.clear();
                         self.leading_checked = true;
@@ -749,6 +765,21 @@ impl RoleplayOutputSanitizer {
                         "The system",
                         "El asistente",
                         "The assistant",
+                        "La IA",
+                        "The AI",
+                        "La inteligencia artificial",
+                        "Artificial intelligence",
+                        "Step-by-step reasoning",
+                        "Step by step reasoning",
+                        "Chain-of-thought",
+                        "Chain of thought",
+                        "Reasoning process",
+                        "Razonamiento paso a paso",
+                        "Proceso de razonamiento",
+                        "Pensamiento paso a paso",
+                        "Let's think",
+                        "Let me think",
+                        "Voy a analizar",
                     ]
                     .iter()
                     .map(|prefix| *prefix)
@@ -1410,5 +1441,29 @@ mod tests {
             .join("");
         result.push_str(&sanitizer.finish().join(""));
         assert_eq!(result, "*Tsuyu se detiene.*");
+    }
+
+    #[test]
+    fn sanitizer_hides_ai_preamble_when_it_is_split_across_stream_chunks() {
+        let mut sanitizer = RoleplayOutputSanitizer::new(Some("Tsuyu Asui"), Some("Tadeo"));
+        assert!(sanitizer
+            .push("La IA está considerando cómo responder. ")
+            .is_empty());
+        assert!(sanitizer
+            .push("A continuación, verás cómo se desarrolla la escena. ")
+            .is_empty());
+        let mut result = sanitizer.push("**Tsuyu se detiene y te mira.**").join("");
+        result.push_str(&sanitizer.finish().join(""));
+        assert_eq!(result, "*Tsuyu se detiene y te mira.*");
+    }
+
+    #[test]
+    fn sanitizer_hides_step_by_step_reasoning_before_roleplay() {
+        let mut sanitizer = RoleplayOutputSanitizer::new(Some("Tsuyu Asui"), Some("Tadeo"));
+        let mut result = sanitizer
+            .push("Step-by-step reasoning process:\n\n1. Understand the persona and context.\n2. Decide how she should respond.\n\nFollowing these steps, I will respond as the persona described. Tsuyu: **Tsuyu looks at you.** \"What do you mean?\"")
+            .join("");
+        result.push_str(&sanitizer.finish().join(""));
+        assert_eq!(result, "*Tsuyu looks at you.* \"What do you mean?\"");
     }
 }
