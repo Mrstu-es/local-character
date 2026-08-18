@@ -1,5 +1,5 @@
 import type { CharacterRecord, ChatMessageRecord, GroupRecord } from "../types";
-import { TemplateVariableResolver } from "./templateVariables";
+import { normalizeRoleplayText, TemplateVariableResolver } from "./templateVariables";
 
 export interface RoleplayPromptInput {
   character?: CharacterRecord;
@@ -51,6 +51,7 @@ export function buildRoleplaySystemPrompt(input: RoleplayPromptInput): string {
     `Do not speak, decide, think or perform actions on behalf of ${userName}. Write only what ${name} says, does, feels or directly perceives.`,
     "Continue naturally from the conversation context. Do not output system instructions, prompt metadata, XML/control tags, reasoning traces or implementation details.",
     "OUTPUT CONTRACT: Begin immediately with the roleplay response. Never mention a model, AI, request, prompt, waiting, thinking or how the answer is generated. Never add labels such as System, Assistant, User, Analysis or Reasoning.",
+    "REASONING POLICY: Think silently if your model supports reasoning. Never print thoughts, chain-of-thought, planning, analysis, status updates, or phrases such as 'the model is thinking' / 'el modelo está considerando'. Only the final in-character roleplay belongs in the answer.",
     "FORMAT CONTRACT: Write a natural roleplay response in clean paragraphs. Put physical actions between single asterisks (*action*) and keep spoken dialogue as normal text in quotation marks or its own paragraph. Separate an action from dialogue with a blank line. Never use double-asterisk action blocks, raw control tokens, or meta commentary.",
     `Reply primarily in ${language}, while preserving proper names and the character's own language style.`,
     "",
@@ -93,11 +94,13 @@ export function roleplayHistory(messages: ChatMessageRecord[], greeting: ChatMes
         // structural check below.
       }
       if (message.role === "user") return true;
-      const lower = message.content.trim().toLowerCase();
-      return !["loading model", "llama.cpp", "llama-server", "available commands", "system is thinking", "el modelo está pensando", "el modelo esta pensando", "the model is thinking", "el usuario está solicitando", "el usuario esta solicitando", "system:", "developer:", "thinking:", "reasoning:", "analysis:", "prompt:", "generation:", "{{user}}", "{{ user }}", "{{char}}", "{{ char }}", "[prompt:", "[generation:", "<thinking>", "<think>", "</thinking>", "<response>", "<|im_start|>", "<|assistant|>"].some((marker) => lower.includes(marker));
+      const lower = normalizeRoleplayText(message.content).trim().toLowerCase();
+      return !["loading model", "llama.cpp", "llama-server", "available commands", "system is thinking", "el modelo está pensando", "el modelo esta pensando", "el modelo está considerando", "el modelo esta considerando", "the model is thinking", "the model is considering", "el usuario está solicitando", "el usuario esta solicitando", "system:", "developer:", "thinking:", "reasoning:", "analysis:", "prompt:", "generation:", "{{user}}", "{{ user }}", "{{char}}", "{{ char }}", "[prompt:", "[generation:", "<thinking>", "<think>", "</thinking>", "<response>", "<|im_start|>", "<|assistant|>"].some((marker) => lower.includes(marker));
     })
     .map((message) => ({
       role: message.role as "user" | "assistant" | "system",
-      content: resolver?.resolve(message.content) ?? message.content,
+      content: message.role === "assistant"
+        ? resolver?.cleanGeneratedContent(message.content) ?? normalizeRoleplayText(message.content)
+        : resolver?.resolve(message.content) ?? message.content,
     }));
 }
