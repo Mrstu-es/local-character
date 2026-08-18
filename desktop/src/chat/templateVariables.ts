@@ -3,36 +3,59 @@ export interface TemplateVariableContext {
   characterName?: string;
 }
 
+const META_PREFIX = /^(?:\s*)(?:el\s+(?:modelo|sistema|asistente)|the\s+(?:model|system|assistant)|system)\b/i;
+const META_LINE = /^(?:\s*)(?:(?:el\s+(?:modelo|sistema|asistente)|the\s+(?:model|system|assistant)|system)\b|(?:thinking|reasoning|analysis|prompt|generation|assistant|developer|user)\s*:)/i;
+
+function stripMetaPrefix(value: string): string {
+  const leading = value.trimStart();
+  if (!META_PREFIX.test(leading)) return value;
+
+  // Reasoning models often emit a natural-language preamble instead of
+  // <think> tags. Keep only the first action or spoken line.
+  const roleplayStart = leading.search(/\*{1,3}(?=\S)|["“«]/);
+  if (roleplayStart >= 0) return leading.slice(roleplayStart);
+
+  // If the preamble is on its own line, keep the response that follows it.
+  const newline = leading.indexOf("\n");
+  return newline >= 0 ? leading.slice(newline + 1) : "";
+}
+
 /**
  * Sanitizes model output before it reaches the conversation UI or storage.
  * Character cards and GGUF models are not always consistent about chat
  * templates, so this is deliberately defensive: it removes leaked control
- * blocks/meta commentary while keeping the roleplay actions and dialogue.
+ * blocks/meta commentary while keeping roleplay actions and dialogue.
  */
 export function normalizeRoleplayText(value?: string | null): string {
   let cleaned = value ?? "";
   cleaned = cleaned.replace(/\r\n?/g, "\n");
-  cleaned = cleaned.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/(?:think|thinking)>/gi, "");
-  cleaned = cleaned.replace(/<analysis\b[^>]*>[\s\S]*?<\/analysis>/gi, "");
-  cleaned = cleaned.replace(/<\|(?:thinking|thought|analysis)\|>[\s\S]*?<\|\/(?:thinking|thought|analysis)\|>/gi, "");
-  cleaned = cleaned.replace(/<\|(?:im_start|im_end|assistant|user|system|eot_id|end_of_turn)\|>/gi, "");
-  cleaned = cleaned.replace(/<\/?(?:response|think|thinking|analysis)>/gi, "");
+  cleaned = cleaned.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/(?:think|thinking)>/giu, "");
+  cleaned = cleaned.replace(/<analysis\b[^>]*>[\s\S]*?<\/analysis>/giu, "");
+  cleaned = cleaned.replace(/<\|(?:thinking|thought|analysis)\|>[\s\S]*?<\|\/(?:thinking|thought|analysis)\|>/giu, "");
+  cleaned = cleaned.replace(/<\|(?:im_start|im_end|assistant|user|system|eot_id|end_of_turn|end_of_text)\|>/giu, "");
+  cleaned = cleaned.replace(/<\/?(?:response|think|thinking|analysis)>/giu, "");
 
-  // These lines are runtime/meta text, never part of a character response.
-  cleaned = cleaned.replace(/(?:^|\n)\s*(?:el modelo (?:est[áa] )?(?:pensando|razonando|generando)[^\n]*|the model is (?:thinking|reasoning|generating)[^\n]*|system (?:is )?thinking[^\n]*|por favor,? (?:ten|tenga) paciencia[^\n]*)(?=\n|$)/gi, "\n");
-  cleaned = cleaned.replace(/(?:^|\n)\s*(?:system|assistant|user|developer|thinking|reasoning|analysis|prompt|generation)\s*:\s*/gi, "\n");
+  // Remove model/system preambles in Spanish and English, including variants
+  // such as "El modelo está considerando cómo responder…".
+  cleaned = stripMetaPrefix(cleaned);
+  cleaned = cleaned
+    .split("\n")
+    .filter((line) => !META_LINE.test(line.trim()))
+    .join("\n");
+  cleaned = cleaned.replace(/(?:^|\n)\s*(?:por favor,? (?:ten|tenga) paciencia|please wait|generating response|generating a response)[^\n]*(?=\n|$)/giu, "\n");
+  cleaned = cleaned.replace(/(?:^|\n)\s*(?:system|assistant|user|developer|thinking|reasoning|analysis|prompt|generation)\s*:\s*/giu, "\n");
 
-  // Character cards commonly use bold markdown for actions. Render them as
-  // single-star roleplay actions, which avoids the distracting ** markers.
-  cleaned = cleaned.replace(/\*\*([^*\n]+)\*\*/g, "*$1*");
+  // Never expose bold Markdown/action markers from a model. Collapse any run
+  // of multiple stars, including unbalanced or streamed `***`/`****` forms.
+  cleaned = cleaned.replace(/\*{2,}/g, "*");
   cleaned = cleaned.replace(/\n[ \t]*[-=]{3,}[ \t]*\n/g, "\n");
   cleaned = cleaned.replace(/[ \t]+\n/g, "\n");
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
 
   // Keep action and spoken dialogue legible when a model places them on one
   // line ("*se acerca* \"Hola\"").
-  cleaned = cleaned.replace(/(\*[^*\n]+\*)[ \t]+(?=["“])/g, "$1\n\n");
-  cleaned = cleaned.replace(/(["”])[ \t]+(\*[^*\n]+\*)/g, "$1\n\n$2");
+  cleaned = cleaned.replace(/(\*[^*\n]+\*)[ \t]+(?=["“])/gu, "$1\n\n");
+  cleaned = cleaned.replace(/(["”])[ \t]+(\*[^*\n]+\*)/gu, "$1\n\n$2");
   return cleaned.trim();
 }
 
@@ -53,9 +76,9 @@ export class TemplateVariableResolver {
   resolve(value?: string | null): string {
     if (!value) return "";
     return value
-      .replace(/\{\{\s*user\s*\}\}/gi, this.userName)
-      .replace(/\{\{\s*char\s*\}\}/gi, this.characterName)
-      .replace(/\{\{\s*character\s*\}\}/gi, this.characterName);
+      .replace(/\{\{\s*user\s*\}\}/giu, this.userName)
+      .replace(/\{\{\s*char\s*\}\}/giu, this.characterName)
+      .replace(/\{\{\s*character\s*\}\}/giu, this.characterName);
   }
 
   resolveList(values?: Array<string | null>): string[] {
@@ -64,18 +87,16 @@ export class TemplateVariableResolver {
 
   cleanGeneratedContent(value?: string | null): string {
     let cleaned = this.resolve(value).trim();
-    cleaned = cleaned.replace(/^(?:system\s+is\s+thinking|el\s+modelo\s+est(?:a|\u00e1)\s+pensando|the\s+model\s+is\s+thinking)[\s\S]*?(?=\*|<response>|<RESPONSE>|<\/thinking>|<\/think>|$)/i, "");
-    const orphanReasoningClose = cleaned.search(/<\/(?:think|thinking|analysis)>/i);
-    if (orphanReasoningClose >= 0 && !/<(?:think|thinking|analysis)>/i.test(cleaned.slice(0, orphanReasoningClose))) {
-      cleaned = cleaned.slice(orphanReasoningClose).replace(/^<\/(?:think|thinking|analysis)>/i, "").trimStart();
+    cleaned = cleaned.replace(/^(?:system\s+is\s+thinking|el\s+modelo\s+est(?:a|\u00e1)\s+(?:pensando|considerando|razonando|generando)|the\s+model\s+is\s+(?:thinking|considering|reasoning|generating))[\s\S]*?(?=\*{1,3}(?=\S)|["“«]|$)/iu, "");
+    const orphanReasoningClose = cleaned.search(/<\/(?:think|thinking|analysis)>/iu);
+    if (orphanReasoningClose >= 0 && !/<(?:think|thinking|analysis)>/iu.test(cleaned.slice(0, orphanReasoningClose))) {
+      cleaned = cleaned.slice(orphanReasoningClose).replace(/^<\/(?:think|thinking|analysis)>/iu, "").trimStart();
     }
-    cleaned = cleaned.replace(/^(?:system\s+is\s+thinking|system|assistant|user|developer|thinking|reasoning|analysis|prompt|generation)\s*:\s*/i, "");
-    cleaned = cleaned.replace(/^<think>[\s\S]*?<\/think>\s*/i, "");
-    cleaned = cleaned.replace(/^<thinking>[\s\S]*?<\/thinking>\s*/i, "");
-    cleaned = cleaned.replace(/^<analysis>[\s\S]*?<\/analysis>\s*/i, "");
-    cleaned = cleaned.replace(/<\/?(?:response|think|thinking|analysis)>/gi, "");
+    cleaned = cleaned.replace(/^(?:system|assistant|user|developer|thinking|reasoning|analysis|prompt|generation)\s*:\s*/iu, "");
+    cleaned = cleaned.replace(/^<(?:think|thinking|analysis)>[\s\S]*?<\/(?:think|thinking|analysis)>\s*/iu, "");
+    cleaned = cleaned.replace(/<\/?(?:response|think|thinking|analysis)>/giu, "");
     const escapedCharacterName = this.characterName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    cleaned = cleaned.replace(new RegExp(`^\\s*${escapedCharacterName}\\s*:\\s*`, "i"), "");
+    cleaned = cleaned.replace(new RegExp(`^\\s*${escapedCharacterName}\\s*:\\s*`, "iu"), "");
     return normalizeRoleplayText(cleaned);
   }
 }
