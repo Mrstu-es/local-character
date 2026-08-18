@@ -41,6 +41,7 @@ import com.localcharacter.app.llm.provider.ProviderModelSelection
 import com.localcharacter.app.llm.provider.TokenUsage
 import com.localcharacter.app.llm.provider.LOCAL_PROVIDER_ID
 import com.localcharacter.app.domain.conversation.TtsTextSanitizer
+import com.localcharacter.app.domain.conversation.RoleplayTextFormatter
 import com.localcharacter.app.domain.model.VoiceAutoplayOverride
 import com.localcharacter.app.tts.TtsManager
 import com.localcharacter.app.tts.TtsSynthesisSettings
@@ -54,6 +55,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -80,6 +82,7 @@ class GroupChatViewModel(
     private val mutableHeader = MutableStateFlow(GroupHeaderState())
     val header: StateFlow<GroupHeaderState> = mutableHeader.asStateFlow()
     val messages = container.groups.messages(groupId, 120)
+        .map { rows -> rows.map { message -> if (message.role == GroupMessageRole.CHARACTER) message.copy(content = RoleplayTextFormatter.normalize(message.content)) else message } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val mutableStreaming = MutableStateFlow<GroupMessage?>(null)
     val streamingMessage: StateFlow<GroupMessage?> = mutableStreaming.asStateFlow()
@@ -326,10 +329,10 @@ class GroupChatViewModel(
             )
             execute(selection, requestBody) { delta ->
                 buffer.append(delta)
-                mutableStreaming.value = response.copy(content = buffer.toString())
+                mutableStreaming.value = response.copy(content = RoleplayTextFormatter.normalize(buffer.toString()))
             }
             if (buffer.isNotBlank()) {
-                val done = response.copy(content = buffer.toString().trim(), isComplete = true)
+                val done = response.copy(content = RoleplayTextFormatter.normalize(buffer.toString()), isComplete = true)
                 mutableStreaming.value = done
                 container.groups.saveMessage(done)
                 maybeSpeak(character, done)
