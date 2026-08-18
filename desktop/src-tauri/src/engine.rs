@@ -635,6 +635,19 @@ impl RoleplayOutputSanitizer {
                     "Let's think",
                     "Let me think",
                     "Voy a analizar",
+                    "CONTINUITY CONTEXT",
+                    "Current topic",
+                    "Current situation",
+                    "Earlier conversation summary",
+                    "Recent meaningful actions",
+                    "Unresolved questions",
+                    "Pending events",
+                    "Recent speakers",
+                    "CONTEXTO DE CONTINUIDAD",
+                    "Tema actual",
+                    "SituaciÃ³n actual",
+                    "Resumen de la conversaciÃ³n",
+                    "Eventos pendientes",
                 ];
                 if generic_meta_prefixes
                     .iter()
@@ -780,6 +793,19 @@ impl RoleplayOutputSanitizer {
                         "Let's think",
                         "Let me think",
                         "Voy a analizar",
+                        "CONTINUITY CONTEXT",
+                        "Current topic",
+                        "Current situation",
+                        "Earlier conversation summary",
+                        "Recent meaningful actions",
+                        "Unresolved questions",
+                        "Pending events",
+                        "Recent speakers",
+                        "CONTEXTO DE CONTINUIDAD",
+                        "Tema actual",
+                        "SituaciÃ³n actual",
+                        "Resumen de la conversaciÃ³n",
+                        "Eventos pendientes",
                     ]
                     .iter()
                     .map(|prefix| *prefix)

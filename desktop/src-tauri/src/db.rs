@@ -1,7 +1,7 @@
 use crate::models::{
-    CharacterRecord, ChatMessageRecord, ConversationRecord, ExploreFilterCatalog,
-    ExploreFilterOption, GroupRecord, ModelRecord, ProviderRecord, RemoteCharacterRecord,
-    RepositorySourceRecord, VoiceModelRecord, VoiceRepositoryRecord,
+    CharacterRecord, ChatMessageRecord, ConversationRecord, ConversationSummaryRecord,
+    ExploreFilterCatalog, ExploreFilterOption, GroupRecord, ModelRecord, ProviderRecord,
+    RemoteCharacterRecord, RepositorySourceRecord, VoiceModelRecord, VoiceRepositoryRecord,
 };
 use directories::ProjectDirs;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -682,6 +682,9 @@ impl Database {
                 ],
             )
             .map_err(|e| format!("No se pudo guardar el mensaje: {e}"))?;
+        if message.edited_at.is_some() {
+            self.delete_conversation_summary(&message.conversation_id)?;
+        }
         if is_real_chat_message(message) {
             self.connection
                 .execute(
@@ -690,6 +693,68 @@ impl Database {
                 )
                 .map_err(|e| format!("No se pudo actualizar el resumen del chat: {e}"))?;
         }
+        Ok(())
+    }
+
+    pub fn get_conversation_summary(
+        &mut self,
+        conversation_id: &str,
+    ) -> Result<Option<ConversationSummaryRecord>, String> {
+        self.connection
+            .query_row(
+                "SELECT conversation_id, summary, summary_until_message_id, message_count,
+                        token_count, updated_at
+                 FROM conversation_summaries WHERE conversation_id = ?1",
+                [conversation_id],
+                |row| {
+                    Ok(ConversationSummaryRecord {
+                        conversation_id: row.get(0)?,
+                        summary: row.get(1)?,
+                        summary_until_message_id: row.get(2)?,
+                        message_count: row.get(3)?,
+                        token_count: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|error| format!("No se pudo leer el resumen del chat: {error}"))
+    }
+
+    pub fn upsert_conversation_summary(
+        &mut self,
+        summary: &ConversationSummaryRecord,
+    ) -> Result<(), String> {
+        self.connection
+            .execute(
+                "INSERT INTO conversation_summaries
+                 (conversation_id, summary, summary_until_message_id, message_count, token_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(conversation_id) DO UPDATE SET
+                  summary=excluded.summary,
+                  summary_until_message_id=excluded.summary_until_message_id,
+                  message_count=excluded.message_count,
+                  token_count=excluded.token_count,
+                  updated_at=CURRENT_TIMESTAMP",
+                params![
+                    summary.conversation_id,
+                    summary.summary,
+                    summary.summary_until_message_id,
+                    summary.message_count,
+                    summary.token_count,
+                ],
+            )
+            .map_err(|error| format!("No se pudo guardar el resumen del chat: {error}"))?;
+        Ok(())
+    }
+
+    pub fn delete_conversation_summary(&mut self, conversation_id: &str) -> Result<(), String> {
+        self.connection
+            .execute(
+                "DELETE FROM conversation_summaries WHERE conversation_id = ?1",
+                [conversation_id],
+            )
+            .map_err(|error| format!("No se pudo invalidar el resumen del chat: {error}"))?;
         Ok(())
     }
 
@@ -707,6 +772,7 @@ impl Database {
             .execute("DELETE FROM messages WHERE id = ?1", [id])
             .map_err(|e| format!("No se pudo eliminar el mensaje: {e}"))?;
         if let Some(conversation_id) = conversation_id {
+            self.delete_conversation_summary(&conversation_id)?;
             self.refresh_conversation_preview(&conversation_id)?;
         }
         Ok(())
@@ -1739,6 +1805,24 @@ fn apply_migrations(connection: &mut Connection) -> Result<(), String> {
         connection
             .execute("INSERT INTO schema_migrations(version) VALUES (6)", [])
             .map_err(|e| format!("No se pudo registrar la migraciÃ³n 6: {e}"))?;
+    }
+    let current: i64 = connection
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("No se pudo leer schema_migrations: {e}"))?;
+    if current < 7 {
+        add_column_if_missing(
+            connection,
+            "conversation_summaries",
+            "summary_until_message_id",
+            "TEXT",
+        )?;
+        connection
+            .execute("INSERT INTO schema_migrations(version) VALUES (7)", [])
+            .map_err(|e| format!("No se pudo registrar la migraciÃ³n 7: {e}"))?;
     }
     Ok(())
 }

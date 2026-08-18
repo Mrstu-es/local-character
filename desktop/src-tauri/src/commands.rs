@@ -6,10 +6,10 @@ use crate::engine::{
 use crate::hardware::{detect, HardwareSnapshot};
 use crate::model_registry::inspect_gguf;
 use crate::models::{
-    CharacterRecord, ChatMessageRecord, ConversationRecord, ExploreFilterCatalog, GroupRecord,
-    ModelRecord, ProviderRecord, RemoteCharacterRecord, RepositoryProbe, RepositorySourceRecord,
-    RepositorySyncResult, SuspiciousMessageRecord, VoiceModelRecord, VoiceRepositoryRecord,
-    VoiceRepositorySyncResult,
+    CharacterRecord, ChatMessageRecord, ConversationRecord, ConversationSummaryRecord,
+    ExploreFilterCatalog, GroupRecord, ModelRecord, ProviderRecord, RemoteCharacterRecord,
+    RepositoryProbe, RepositorySourceRecord, RepositorySyncResult, SuspiciousMessageRecord,
+    VoiceModelRecord, VoiceRepositoryRecord, VoiceRepositorySyncResult,
 };
 use crate::native_process;
 use crate::repository;
@@ -915,6 +915,34 @@ pub fn list_messages(
         .lock()
         .map_err(|_| "SQLite bloqueado".to_string())?;
     database.list_messages(&conversation_id)
+}
+
+#[tauri::command]
+pub fn get_conversation_summary(
+    conversation_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<ConversationSummaryRecord>, String> {
+    let mut database = state
+        .database
+        .lock()
+        .map_err(|_| "SQLite bloqueado".to_string())?;
+    database.get_conversation_summary(&conversation_id)
+}
+
+#[tauri::command]
+pub fn save_conversation_summary(
+    summary: ConversationSummaryRecord,
+    state: State<'_, AppState>,
+) -> Result<ConversationSummaryRecord, String> {
+    if summary.conversation_id.trim().is_empty() {
+        return Err("El resumen necesita una conversaciÃ³n".into());
+    }
+    let mut database = state
+        .database
+        .lock()
+        .map_err(|_| "SQLite bloqueado".to_string())?;
+    database.upsert_conversation_summary(&summary)?;
+    Ok(summary)
 }
 
 #[tauri::command]
