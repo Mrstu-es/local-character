@@ -54,4 +54,9 @@ class ConversationModesTest {
             TtsTextSanitizer.sanitize(value, TtsReadMode.DIALOGUE_AND_ACTIONS),
         )
     }
+
+    @Test fun `roleplay formatter removes reasoning preambles and extra stars`() {
+        val value = "El modelo está considerando cómo responder. A continuación, seguirá la escena. **Tsuyu se detiene.**"
+        assertEquals("*Tsuyu se detiene.*", RoleplayTextFormatter.normalize(value))
+    }
 }
