@@ -24,7 +24,7 @@ La base Desktop incluye dashboard React/TypeScript, detector de hardware, regist
 
 ## Próximamente
 
-Estamos preparando una aplicación para PC que permitirá usar modelos de IA locales más potentes, junto con nuevas funciones para personalizar personajes, conversaciones y memoria. El proyecto sigue creciendo y toda ayuda, comentario o contribución es bienvenida.
+Seguimos ampliando la edición Desktop con más backends acelerados, sincronización portátil opcional y nuevas herramientas para personalizar personajes, conversaciones y memoria. El proyecto sigue creciendo y toda ayuda, comentario o contribución es bienvenida.
 
 Aplicación Android nativa para conversar con personajes usando modelos GGUF en el dispositivo mediante `llama.cpp` o proveedores online opcionales con las credenciales del usuario. El modo local no requiere cuenta, backend ni conexión.
 
