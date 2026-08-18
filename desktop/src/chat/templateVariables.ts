@@ -4,6 +4,39 @@ export interface TemplateVariableContext {
 }
 
 /**
+ * Sanitizes model output before it reaches the conversation UI or storage.
+ * Character cards and GGUF models are not always consistent about chat
+ * templates, so this is deliberately defensive: it removes leaked control
+ * blocks/meta commentary while keeping the roleplay actions and dialogue.
+ */
+export function normalizeRoleplayText(value?: string | null): string {
+  let cleaned = value ?? "";
+  cleaned = cleaned.replace(/\r\n?/g, "\n");
+  cleaned = cleaned.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/(?:think|thinking)>/gi, "");
+  cleaned = cleaned.replace(/<analysis\b[^>]*>[\s\S]*?<\/analysis>/gi, "");
+  cleaned = cleaned.replace(/<\|(?:thinking|thought|analysis)\|>[\s\S]*?<\|\/(?:thinking|thought|analysis)\|>/gi, "");
+  cleaned = cleaned.replace(/<\|(?:im_start|im_end|assistant|user|system|eot_id|end_of_turn)\|>/gi, "");
+  cleaned = cleaned.replace(/<\/?(?:response|think|thinking|analysis)>/gi, "");
+
+  // These lines are runtime/meta text, never part of a character response.
+  cleaned = cleaned.replace(/(?:^|\n)\s*(?:el modelo (?:est[áa] )?(?:pensando|razonando|generando)[^\n]*|the model is (?:thinking|reasoning|generating)[^\n]*|system (?:is )?thinking[^\n]*|por favor,? (?:ten|tenga) paciencia[^\n]*)(?=\n|$)/gi, "\n");
+  cleaned = cleaned.replace(/(?:^|\n)\s*(?:system|assistant|user|developer|thinking|reasoning|analysis|prompt|generation)\s*:\s*/gi, "\n");
+
+  // Character cards commonly use bold markdown for actions. Render them as
+  // single-star roleplay actions, which avoids the distracting ** markers.
+  cleaned = cleaned.replace(/\*\*([^*\n]+)\*\*/g, "*$1*");
+  cleaned = cleaned.replace(/\n[ \t]*[-=]{3,}[ \t]*\n/g, "\n");
+  cleaned = cleaned.replace(/[ \t]+\n/g, "\n");
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+
+  // Keep action and spoken dialogue legible when a model places them on one
+  // line ("*se acerca* \"Hola\"").
+  cleaned = cleaned.replace(/(\*[^*\n]+\*)[ \t]+(?=["“])/g, "$1\n\n");
+  cleaned = cleaned.replace(/(["”])[ \t]+(\*[^*\n]+\*)/g, "$1\n\n$2");
+  return cleaned.trim();
+}
+
+/**
  * Resolves Character Card placeholders without mutating the portable card.
  * A resolver is created for each conversation so two chats can use different
  * user personas while sharing the same original card.
@@ -43,7 +76,7 @@ export class TemplateVariableResolver {
     cleaned = cleaned.replace(/<\/?(?:response|think|thinking|analysis)>/gi, "");
     const escapedCharacterName = this.characterName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     cleaned = cleaned.replace(new RegExp(`^\\s*${escapedCharacterName}\\s*:\\s*`, "i"), "");
-    return cleaned.trim();
+    return normalizeRoleplayText(cleaned);
   }
 }
 
