@@ -138,7 +138,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     const current = generationStateRef.current;
     if (!current || ["COMPLETED", "CANCELLED", "ERROR"].includes(current.status)) return;
     const assistantId = current.messageId;
-    const content = assistantContent.current.get(current.generationId) ?? "";
+    const content = templateResolver.cleanGeneratedContent(assistantContent.current.get(current.generationId) ?? "");
     const record = assistantRecords.current.get(current.generationId);
     const finalError = failure ?? (status === "ERROR" && !content.trim() ? "No se pudo generar la respuesta." : undefined);
     const finalMetadata = record ? { ...metadataFor(record), generationStatus: status.toLowerCase(), finishReason: finishReason ?? status.toLowerCase(), completedAt: now() } : undefined;
@@ -171,7 +171,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     assistantContent.current.delete(current.generationId);
     if (finalError) setError(finalError);
     setRetryAvailable(Boolean(finalError));
-  }, []);
+  }, [templateResolver]);
 
   // Safety net only: normal completion comes from the backend terminal event.
   // A stalled provider must never leave the UI in an infinite writing state.
@@ -242,7 +242,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
           generationStateRef.current = streamingState;
           setGenerationState(streamingState);
         }
-        setMessages((current) => current.map((message) => message.id === id ? { ...message, content } : message));
+        setMessages((current) => current.map((message) => message.id === id ? { ...message, content: templateResolver.cleanGeneratedContent(content) } : message));
       },
       (event) => {
         if (event.generationId !== activeGeneration.current) return;
@@ -267,7 +267,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
       else cleanups = items;
     });
     return () => { disposed = true; cleanups.forEach((cleanup) => cleanup()); };
-  }, [chatId, finishGeneration]);
+  }, [chatId, finishGeneration, templateResolver]);
 
   useEffect(() => {
     const node = textareaRef.current;
