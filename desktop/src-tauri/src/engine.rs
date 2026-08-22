@@ -534,6 +534,60 @@ struct StreamDelta {
     reasoning_content: Option<String>,
 }
 
+/// Normalizes both OpenAI token deltas and non-standard cumulative/replayed
+/// chunks. The latter occur with some GGUF templates and proxies and would
+/// otherwise duplicate the visible answer when every event is concatenated.
+#[derive(Default)]
+struct StreamTextNormalizer {
+    accumulated: String,
+}
+
+impl StreamTextNormalizer {
+    fn push(&mut self, incoming: &str) -> String {
+        if incoming.is_empty() {
+            return String::new();
+        }
+        if self.accumulated.is_empty() {
+            self.accumulated.push_str(incoming);
+            return incoming.to_string();
+        }
+        if incoming.len() > self.accumulated.len() && incoming.starts_with(&self.accumulated) {
+            let novel = incoming[self.accumulated.len()..].to_string();
+            self.accumulated.clear();
+            self.accumulated.push_str(incoming);
+            return novel;
+        }
+        if incoming == self.accumulated && incoming.len() >= 8 {
+            return String::new();
+        }
+        if self.accumulated.starts_with(incoming) && incoming.len() >= 8 {
+            return String::new();
+        }
+        if self.accumulated.ends_with(incoming) && incoming.len() >= 12 {
+            return String::new();
+        }
+
+        let maximum = self.accumulated.len().min(incoming.len());
+        for overlap in (12..=maximum).rev() {
+            if !self
+                .accumulated
+                .is_char_boundary(self.accumulated.len() - overlap)
+                || !incoming.is_char_boundary(overlap)
+            {
+                continue;
+            }
+            if self.accumulated.ends_with(&incoming[..overlap]) {
+                let novel = incoming[overlap..].to_string();
+                self.accumulated.push_str(&novel);
+                return novel;
+            }
+        }
+
+        self.accumulated.push_str(incoming);
+        incoming.to_string()
+    }
+}
+
 /// Removes protocol artifacts only after the provider has already separated
 /// the structured completion from engine logs. It is stateful so tags split
 /// across SSE chunks never flash in the UI (`<thi` + `nking>`).
@@ -635,6 +689,13 @@ impl RoleplayOutputSanitizer {
                     "Let's think",
                     "Let me think",
                     "Voy a analizar",
+                    "Following these steps",
+                    "Based on the context",
+                    "Based on the instructions",
+                    "I will respond",
+                    "Here is the response",
+                    "Here's the response",
+                    "A continuaciÃ³n responderÃ©",
                     "CONTINUITY CONTEXT",
                     "Current topic",
                     "Current situation",
@@ -793,6 +854,13 @@ impl RoleplayOutputSanitizer {
                         "Let's think",
                         "Let me think",
                         "Voy a analizar",
+                        "Following these steps",
+                        "Based on the context",
+                        "Based on the instructions",
+                        "I will respond",
+                        "Here is the response",
+                        "Here's the response",
+                        "A continuaciÃ³n responderÃ©",
                         "CONTINUITY CONTEXT",
                         "Current topic",
                         "Current situation",
@@ -1191,6 +1259,7 @@ pub fn generate_stream(
     let mut finish_reason = "eof".to_string();
     let mut sanitizer =
         RoleplayOutputSanitizer::new(character_name.as_deref(), user_name.as_deref());
+    let mut stream_text = StreamTextNormalizer::default();
     let mut visible_chars = 0_u64;
     let mut reasoning_chars = 0_u64;
     let mut raw_chars = 0_u64;
@@ -1252,7 +1321,8 @@ pub fn generate_stream(
         }
         if let Some(text) = delta.content.as_deref() {
             raw_chars += text.chars().count() as u64;
-            for visible in sanitizer.push(text) {
+            let novel = stream_text.push(text);
+            for visible in sanitizer.push(&novel) {
                 emit_visible_delta(
                     &app,
                     &generation_id,
@@ -1422,7 +1492,36 @@ fn server_is_running(state: &mut EngineRuntime) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::RoleplayOutputSanitizer;
+    use super::{RoleplayOutputSanitizer, StreamTextNormalizer};
+
+    #[test]
+    fn stream_normalizer_accepts_incremental_and_cumulative_chunks() {
+        let mut incremental = StreamTextNormalizer::default();
+        assert_eq!(incremental.push("*Mira"), "*Mira");
+        assert_eq!(incremental.push(" hacia ti*"), " hacia ti*");
+        assert_eq!(incremental.accumulated, "*Mira hacia ti*");
+
+        let mut cumulative = StreamTextNormalizer::default();
+        assert_eq!(cumulative.push("*Mira"), "*Mira");
+        assert_eq!(cumulative.push("*Mira hacia"), " hacia");
+        assert_eq!(cumulative.push("*Mira hacia ti*"), " ti*");
+        assert_eq!(cumulative.accumulated, "*Mira hacia ti*");
+    }
+
+    #[test]
+    fn stream_normalizer_drops_long_replays_but_keeps_short_repetition() {
+        let mut normalizer = StreamTextNormalizer::default();
+        assert_eq!(
+            normalizer.push("Una respuesta completa."),
+            "Una respuesta completa."
+        );
+        assert_eq!(normalizer.push("Una respuesta completa."), "");
+
+        let mut stutter = StreamTextNormalizer::default();
+        assert_eq!(stutter.push("no"), "no");
+        assert_eq!(stutter.push("no"), "no");
+        assert_eq!(stutter.accumulated, "nono");
+    }
 
     #[test]
     fn sanitizer_holds_split_reasoning_tags_and_normalizes_actions() {

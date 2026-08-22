@@ -639,7 +639,8 @@ impl Database {
             .prepare(
                 "SELECT id, conversation_id, role, content, reply_to_id, pinned,
                         metadata_json, created_at, edited_at
-                 FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC, id ASC LIMIT 5000",
+                 FROM messages WHERE conversation_id = ?1
+                 ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 5000",
             )
             .map_err(|e| format!("No se pudieron consultar mensajes: {e}"))?;
         let rows = statement
@@ -1985,8 +1986,45 @@ fn add_column_if_missing(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_real_chat_message, suspicious_message_reason};
+    use super::{is_real_chat_message, suspicious_message_reason, Database};
     use crate::models::ChatMessageRecord;
+    use rusqlite::{params, Connection};
+    use std::path::PathBuf;
+
+    fn message_database() -> Database {
+        let connection = Connection::open_in_memory().expect("open in-memory SQLite");
+        connection
+            .execute_batch(
+                "CREATE TABLE messages (
+                    id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    reply_to_id TEXT,
+                    pinned INTEGER NOT NULL DEFAULT 0,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    edited_at TEXT
+                );",
+            )
+            .expect("create messages table");
+        Database {
+            connection,
+            path: PathBuf::new(),
+        }
+    }
+
+    fn insert_message(database: &Database, id: &str, role: &str, content: &str, created_at: &str) {
+        database
+            .connection
+            .execute(
+                "INSERT INTO messages
+                 (id, conversation_id, role, content, reply_to_id, pinned, metadata_json, created_at, edited_at)
+                 VALUES (?1, 'conversation', ?2, ?3, NULL, 0, '{}', ?4, NULL)",
+                params![id, role, content, created_at],
+            )
+            .expect("insert message");
+    }
 
     fn message(role: &str, content: &str, metadata_json: &str) -> ChatMessageRecord {
         ChatMessageRecord {
@@ -2018,5 +2056,66 @@ mod tests {
         );
         assert!(is_real_chat_message(&turn));
         assert!(suspicious_message_reason(&turn).is_none());
+    }
+
+    #[test]
+    fn messages_with_equal_timestamps_keep_insertion_order() {
+        let mut database = message_database();
+        let timestamp = "2026-08-22T12:00:00.000Z";
+        // The ids deliberately sort in the opposite order. The transcript
+        // must still preserve the inserted user -> assistant turn.
+        insert_message(&database, "z-user", "user", "hola", timestamp);
+        insert_message(
+            &database,
+            "a-assistant",
+            "assistant",
+            "hola, usuario",
+            timestamp,
+        );
+
+        let messages = database
+            .list_messages("conversation")
+            .expect("list messages");
+
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["z-user", "a-assistant"]
+        );
+    }
+
+    #[test]
+    fn messages_sort_chronologically_across_sqlite_and_iso_timestamps() {
+        let mut database = message_database();
+        // Plain TEXT ordering puts the space-separated value before every ISO
+        // value from the same date, even though this SQLite timestamp is later.
+        insert_message(
+            &database,
+            "late-sqlite",
+            "assistant",
+            "respuesta posterior",
+            "2026-08-22 12:00:02",
+        );
+        insert_message(
+            &database,
+            "early-iso",
+            "user",
+            "mensaje anterior",
+            "2026-08-22T12:00:01.000Z",
+        );
+
+        let messages = database
+            .list_messages("conversation")
+            .expect("list messages");
+
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["early-iso", "late-sqlite"]
+        );
     }
 }

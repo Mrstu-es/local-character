@@ -1,5 +1,6 @@
 import type { CharacterRecord, ChatMessageRecord, GroupRecord } from "../types";
 import { continuityPromptSection, type ContinuityContext } from "./continuity";
+import { roleplayLanguageName, type RoleplayLanguage } from "./language";
 import { normalizeRoleplayText, TemplateVariableResolver } from "./templateVariables";
 
 export interface RoleplayPromptInput {
@@ -13,6 +14,25 @@ export interface RoleplayPromptInput {
   continueGeneration?: boolean;
 }
 
+function languageContract(language: RoleplayLanguage): string[] {
+  if (language === "en") return [
+    "LANGUAGE LOCK (HIGH PRIORITY): Write the entire visible response in English: narration, actions, dialogue and descriptions.",
+    "Do not translate, repeat the answer in another language, or switch the narration to another language. Proper names and an established character catchphrase are the only exceptions.",
+  ];
+  if (language === "pt") return [
+    "BLOQUEIO DE IDIOMA (PRIORIDADE ALTA): Escreva toda a resposta visível em português: narração, ações, diálogo e descrições.",
+    "Não traduza, não repita a resposta em outro idioma e não mude o idioma da narração. Nomes próprios e um bordão já estabelecido do personagem são as únicas exceções.",
+  ];
+  if (language === "fr") return [
+    "VERROUILLAGE DE LANGUE (PRIORITÉ ÉLEVÉE) : Écris toute la réponse visible en français : narration, actions, dialogue et descriptions.",
+    "Ne traduis pas et ne répète pas la réponse dans une autre langue. Ne change pas la langue de la narration. Seuls les noms propres et une expression canonique du personnage font exception.",
+  ];
+  return [
+    "BLOQUEO DE IDIOMA (PRIORIDAD ALTA): Escribe toda la respuesta visible en español: narración, acciones, diálogo y descripciones.",
+    "No traduzcas ni repitas la respuesta en otro idioma y no cambies la narración al inglés. Los nombres propios y una frase canónica ya establecida del personaje son las únicas excepciones.",
+  ];
+}
+
 function text(value?: string): string {
   return value?.trim() ?? "";
 }
@@ -22,21 +42,6 @@ function loreText(value: unknown): string {
   if (!value || typeof value !== "object") return "";
   const item = value as Record<string, unknown>;
   return String(item.content ?? item.text ?? item.description ?? "").trim();
-}
-
-function recentTranscript(context?: ContinuityContext, resolver?: TemplateVariableResolver): string {
-  if (!context?.recentMessages.length) return "(la conversación todavía no tiene turnos guardados)";
-  return context.recentMessages
-    .slice(-10)
-    .map((message) => {
-      const speaker = message.role === "user" ? "Usuario" : "Personaje";
-      const content = message.role === "assistant"
-        ? resolver?.cleanGeneratedContent(message.content) ?? normalizeRoleplayText(message.content)
-        : resolver?.resolve(message.content) ?? message.content;
-      return `${speaker}: ${content.trim().slice(0, 900)}`;
-    })
-    .filter((line) => line.split(": ").slice(1).join(": ").trim())
-    .join("\n");
 }
 
 /**
@@ -50,7 +55,8 @@ export function buildRoleplaySystemPrompt(input: RoleplayPromptInput): string {
   const name = text(character?.name) || text(group?.name) || "el personaje";
   const userName = text(input.userName) || "Usuario";
   const resolver = new TemplateVariableResolver({ userName, characterName: name });
-  const language = input.language === "en" ? "English" : input.language === "pt" ? "Portuguese" : input.language === "fr" ? "French" : "Spanish";
+  const languageCode: RoleplayLanguage = input.language === "en" || input.language === "pt" || input.language === "fr" ? input.language : "es";
+  const language = roleplayLanguageName(languageCode);
   const participants = group
     ? (group.participantIds ?? [])
       .map((id) => input.characters?.find((item) => item.id === id)?.name)
@@ -61,6 +67,9 @@ export function buildRoleplaySystemPrompt(input: RoleplayPromptInput): string {
   const memories = (input.memories ?? []).map((item) => resolver.resolve(item).trim()).filter(Boolean).slice(-20);
 
   const sections = [
+    ...languageContract(languageCode),
+    "Return exactly one response for the latest user turn. Do not draft alternatives, second versions, translations, summaries or repeated answer blocks.",
+    "",
     "ROLEPLAY CORE",
     `You are ${name}. You are participating in an ongoing fictional conversation/roleplay with ${userName}.`,
     `Stay fully in character as ${name}. Answer directly with the character's dialogue, actions and feelings.`,
@@ -76,7 +85,7 @@ export function buildRoleplaySystemPrompt(input: RoleplayPromptInput): string {
     "OUTPUT CONTRACT: Begin immediately with the roleplay response. Never mention a model, AI, request, prompt, waiting, thinking or how the answer is generated. Never add labels such as System, Assistant, User, Analysis or Reasoning.",
     "REASONING POLICY: Think silently if your model supports reasoning. Never print thoughts, chain-of-thought, planning, analysis, status updates, or phrases such as 'the model is thinking' / 'el modelo está considerando'. Only the final in-character roleplay belongs in the answer.",
     "FORMAT CONTRACT: Write a natural roleplay response in clean paragraphs. Put physical actions between single asterisks (*action*) and keep spoken dialogue as normal text in quotation marks or its own paragraph. Separate an action from dialogue with a blank line. Never use double-asterisk action blocks, raw control tokens, or meta commentary.",
-    `Reply primarily in ${language}, while preserving proper names and the character's own language style.`,
+    `Reply entirely in ${language}, while preserving proper names and the character's established manner of speaking.`,
     "",
     "CHARACTER IDENTITY",
     `Name: ${name}`,
@@ -91,9 +100,6 @@ export function buildRoleplaySystemPrompt(input: RoleplayPromptInput): string {
     `Group system instructions: ${resolver.resolve(text(group?.systemPrompt)) || "(none)"}`,
     ...(input.continuity ? ["", continuityPromptSection(input.continuity, input.continueGeneration)] : []),
     "",
-    "RECENT TRANSCRIPT (oldest to newest; use it silently as the current scene)",
-    recentTranscript(input.continuity, resolver),
-    "",
     "EXAMPLE DIALOGUE (style reference only; never repeat it as the current answer)",
     resolver.resolve(text(character?.exampleMessages)) || "(none)",
     "",
@@ -102,6 +108,9 @@ export function buildRoleplaySystemPrompt(input: RoleplayPromptInput): string {
     "",
     "RELEVANT LONG-TERM MEMORY (internal; use silently and only when relevant)",
     memories.length ? memories.join("\n") : "(none)",
+    "",
+    ...languageContract(languageCode),
+    `FINAL OUTPUT CHECK: Return one in-character response in ${language}. Do not expose reasoning, repeat a block, translate the answer, or append an alternative version.`,
   ];
 
   return sections.join("\n").trim();

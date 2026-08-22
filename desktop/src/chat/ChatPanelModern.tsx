@@ -22,6 +22,8 @@ import { buildRoleplaySystemPrompt, roleplayHistory } from "./promptBuilder";
 import { buildContinuityContext, estimateTokens, type ContinuityContext } from "./continuity";
 import { conversationUserName, TemplateVariableResolver } from "./templateVariables";
 import { extractSemanticMemories, mergeSemanticMemories, semanticMemoryPromptText } from "./semanticMemory";
+import { inferRoleplayLanguage } from "./language";
+import { collapseConsecutiveDuplicateAssistants, mergeStreamText } from "./outputGuard";
 
 interface ChatPanelModernProps {
   chatId: string;
@@ -106,7 +108,10 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
   const [greetingHidden, setGreetingHidden] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const reloadEpochRef = useRef(0);
+  const conversationIdRef = useRef(conversationId);
   const activeGeneration = useRef<string | null>(null);
+  const sendLock = useRef(false);
   const assistantIds = useRef(new Map<string, string>());
   const assistantContent = useRef(new Map<string, string>());
   const assistantRecords = useRef(new Map<string, ChatMessageRecord>());
@@ -117,6 +122,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
   const [activePlaybackMessageId, setActivePlaybackMessageId] = useState<string | null>(null);
   const playbackToken = useRef(0);
   const nearBottom = useRef(true);
+  conversationIdRef.current = conversationId;
   const isGenerating = generationState?.status === "WAITING_FIRST_TOKEN" || generationState?.status === "STREAMING" || generationState?.status === "COMPLETING";
   const waitingFirstToken = generationState?.status === "WAITING_FIRST_TOKEN";
   const contextMemories = useMemo(
@@ -142,21 +148,32 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
   // A chat screen can be reused for another character while a previous turn
   // is still mounted. Never let its assistant maps or typing state leak into
   // the newly selected conversation.
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // Invalidate pending loads before the newly selected chat is painted.
+    reloadEpochRef.current += 1;
     activeGeneration.current = null;
+    sendLock.current = false;
     if (generationStateRef.current && isTauriRuntime()) void stopGeneration().catch(() => undefined);
     generationStateRef.current = null;
     setGenerationState(null);
     assistantIds.current.clear();
     assistantContent.current.clear();
     assistantRecords.current.clear();
+    setMessages([]);
+    setMemories([]);
     setError(null);
     setRetryAvailable(false);
     setConversationSummary(null);
     setSemanticMemories([]);
+    setDraft("");
+    setActionMode(false);
+    setSelectedMessageId(null);
+    setMenuAnchor(null);
+    setShowJumpToEnd(false);
     summaryRef.current = null;
     messageRecordsRef.current = [];
     lastUserMessage.current = null;
+    nearBottom.current = true;
     setGreetingHidden(false);
   }, [chatId]);
 
@@ -203,9 +220,10 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     onMemoryChanged?.();
   }, [character?.id, character?.name, conversationId, fallbackGroupCharacter?.id, fallbackGroupCharacter?.name, onMemoryChanged, userName]);
 
-  const finishGeneration = useCallback((status: "COMPLETED" | "CANCELLED" | "ERROR", failure?: string, finishReason?: string) => {
+  const finishGeneration = useCallback((status: "COMPLETED" | "CANCELLED" | "ERROR", failure?: string, finishReason?: string, expectedGenerationId?: string) => {
     const current = generationStateRef.current;
     if (!current || ["COMPLETED", "CANCELLED", "ERROR"].includes(current.status)) return;
+    if (expectedGenerationId && current.generationId !== expectedGenerationId) return;
     const assistantId = current.messageId;
     const content = templateResolver.cleanGeneratedContent(assistantContent.current.get(current.generationId) ?? "");
     const record = assistantRecords.current.get(current.generationId);
@@ -244,6 +262,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     generationStateRef.current = completedState;
     setGenerationState(completedState);
     activeGeneration.current = null;
+    sendLock.current = false;
     assistantRecords.current.delete(current.generationId);
     assistantIds.current.delete(current.generationId);
     assistantContent.current.delete(current.generationId);
@@ -257,12 +276,16 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     const current = generationState;
     if (!current || ["COMPLETED", "CANCELLED", "ERROR"].includes(current.status)) return;
     const timeoutMs = current.status === "WAITING_FIRST_TOKEN" ? 120_000 : 15 * 60_000;
-    const timer = window.setTimeout(() => finishGeneration("ERROR", "La generación no terminó a tiempo."), timeoutMs);
+    const timer = window.setTimeout(() => finishGeneration("ERROR", "La generación no terminó a tiempo.", undefined, current.generationId), timeoutMs);
     return () => window.clearTimeout(timer);
   }, [finishGeneration, generationState]);
 
   const reloadMessages = useCallback(async () => {
+    const requestId = ++reloadEpochRef.current;
+    const requestedConversationId = conversationId;
+    const isCurrentRequest = () => requestId === reloadEpochRef.current && conversationIdRef.current === requestedConversationId;
     if (!isTauriRuntime() || !conversationId) {
+      if (!isCurrentRequest()) return;
       setMessages([]);
       setMemories([]);
       setSemanticMemories([]);
@@ -276,10 +299,13 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
         getConversationSummary(conversationId),
         characterId ? listSemanticMemories(characterId, conversationId) : Promise.resolve([] as SemanticMemoryRecord[]),
       ]);
+      if (!isCurrentRequest()) return;
       const normalized = loaded.map((message) => ({ ...message, content: message.role === "assistant" ? templateResolver.cleanGeneratedContent(message.content) : templateResolver.resolve(message.content) }));
-      const renderable = normalized.filter(isRenderableMessage);
+      const collapsed = collapseConsecutiveDuplicateAssistants(normalized.filter(isRenderableMessage));
+      const renderable = collapsed.messages;
       const changed = normalized.filter((message, index) => message.content !== loaded[index].content);
       if (isTauriRuntime()) await Promise.all(changed.filter((message) => message.content.trim()).map((message) => saveMessage(message)));
+      if (!isCurrentRequest()) return;
       setMemories(renderable.filter((message) => message.pinned).map((message) => message.content));
       const extracted = characterId ? extractSemanticMemories({
         messages: renderable.slice(-40),
@@ -294,17 +320,23 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
         return !saved || saved.content !== memory.content || saved.sourceMessageId !== memory.sourceMessageId;
       });
       if (isTauriRuntime() && changedSemantic.length) await Promise.all(changedSemantic.map((memory) => saveSemanticMemory(memory)));
+      if (!isCurrentRequest()) return;
       setSemanticMemories(mergeSemanticMemories(savedSemantic, extracted));
       // Si una respuesta antigua solo contenía razonamiento/metadatos, la
       // normalización la deja vacía. Trátala como mensaje fantasma también
       // para que no reaparezca al volver a abrir la conversación.
       const ghosts = normalized.filter((message) => message.role === "assistant" && !message.content.trim());
+      // Replayed generated rows are hidden from UI/context but retained in the
+      // local database for recovery. Empty protocol/meta ghosts remain safe to
+      // remove because they contain no user-visible content.
       if (isTauriRuntime()) await Promise.all(ghosts.map((message) => deleteMessage(message.id).catch(() => undefined)));
+      if (!isCurrentRequest()) return;
       messageRecordsRef.current = renderable;
       setMessages(renderable);
       setConversationSummary(savedSummary);
       summaryRef.current = savedSummary;
     } catch (cause) {
+      if (!isCurrentRequest()) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, [character?.id, character?.name, conversationId, fallbackGroupCharacter?.id, fallbackGroupCharacter?.name, templateResolver, userName]);
@@ -336,7 +368,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
         if (event.generationId !== activeGeneration.current) return;
         const id = assistantIds.current.get(event.generationId);
         if (!id) return;
-        const content = `${assistantContent.current.get(event.generationId) ?? ""}${event.text}`;
+        const content = mergeStreamText(assistantContent.current.get(event.generationId) ?? "", event.text);
         assistantContent.current.set(event.generationId, content);
         const currentState = generationStateRef.current;
         if (currentState?.status === "WAITING_FIRST_TOKEN") {
@@ -354,15 +386,15 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
           generationStateRef.current = next;
           setGenerationState(next);
         }
-        finishGeneration("COMPLETED", undefined, event.finishReason);
+        finishGeneration("COMPLETED", undefined, event.finishReason, event.generationId);
       },
       (event) => {
         const payload = event && typeof event === "object" ? event as { generationId?: string; error?: string } : undefined;
         if (payload?.generationId && payload.generationId !== activeGeneration.current) return;
-        if (activeGeneration.current) finishGeneration("ERROR", payload?.error ?? String(event));
+        if (activeGeneration.current) finishGeneration("ERROR", payload?.error ?? String(event), undefined, payload?.generationId ?? activeGeneration.current);
       },
       (event) => {
-        if (event.generationId === activeGeneration.current) finishGeneration("CANCELLED", undefined, event.finishReason);
+        if (event.generationId === activeGeneration.current) finishGeneration("CANCELLED", undefined, event.finishReason, event.generationId);
       },
     ).then((items) => {
       if (disposed) items.forEach((cleanup) => cleanup());
@@ -471,7 +503,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
   const stopCurrentGeneration = useCallback(() => {
     if (!generationStateRef.current || !isGenerating) return;
     void stopGeneration().catch(() => undefined);
-    finishGeneration("CANCELLED");
+    finishGeneration("CANCELLED", undefined, undefined, generationStateRef.current.generationId);
   }, [finishGeneration, isGenerating]);
 
   const toggleMemory = useCallback(async (messageId: string) => {
@@ -540,7 +572,10 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     const retry = options?.retry === true;
     const retryUser = retry ? lastUserMessage.current : null;
     const raw = retry ? retryUser?.content.trim() ?? "" : draft.trim();
-    if (isGenerating || !conversationId) return;
+    const activeState = generationStateRef.current;
+    const generationActive = activeState && !["COMPLETED", "CANCELLED", "ERROR"].includes(activeState.status);
+    if (sendLock.current || activeGeneration.current || generationActive || isGenerating || !conversationId) return;
+    sendLock.current = true;
     const wantsContinue = retry ? lastGenerationMode.current === "continue" : raw.length === 0;
     const explicitProvider = preferredProviderId ? providers.find((item) => item.id === preferredProviderId && item.enabled && item.endpoint && item.modelName) : undefined;
     // The Rust runtime is the source of truth for its private loopback port.
@@ -557,6 +592,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
         : "Carga un modelo antes de conversar.";
       setError(message);
       onNotice?.(message);
+      sendLock.current = false;
       return;
     }
     const content = wantsContinue ? "" : actionMode ? `**${raw.replace(/^\*\*|\*\*$/g, "")}**` : raw;
@@ -565,7 +601,8 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     const generationId = crypto.randomUUID();
     const initial = messages.length === 0 && greetingMessage ? greetingMessage : null;
     const user: ChatMessageRecord | null = userId ? { id: userId, conversationId, role: "user", content, pinned: false, metadataJson: JSON.stringify({ source: "user", messageType: "user" }), createdAt: now() } : null;
-    const assistantMetadata = { senderCharacterId: character?.id ?? fallbackGroupCharacter?.id, source: "character", messageType: "character", generated: true };
+    const replyToId = user?.id ?? [...messages].reverse().find((message) => message.role === "user")?.id;
+    const assistantMetadata = { senderCharacterId: character?.id ?? fallbackGroupCharacter?.id, source: "character", messageType: "character", generated: true, generationId, replyToId };
     const assistant: ChatMessageRecord = { id: assistantId, conversationId, role: "assistant", content: "", pinned: false, metadataJson: JSON.stringify(assistantMetadata), createdAt: now() };
     const optimisticMessages = [...(initial ? [initial] : messageRecordsRef.current), ...(user ? [user] : []), assistant];
     messageRecordsRef.current = optimisticMessages;
@@ -594,7 +631,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
         }
       }
     } catch (cause) {
-      finishGeneration("ERROR", cause instanceof Error ? cause.message : String(cause));
+      finishGeneration("ERROR", cause instanceof Error ? cause.message : String(cause), undefined, generationId);
       return;
     }
     const configuredContext = Number(localStorage.getItem("local-character.desktop.context") ?? "8192");
@@ -615,12 +652,19 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     } as const;
     let continuityBuild = buildContinuityContext(continuityInput);
     let continuity: ContinuityContext = continuityBuild.context;
+    const responseLanguage = inferRoleplayLanguage({
+      configured: localStorage.getItem("local-character.desktop.language") ?? "es",
+      messages,
+      currentText: user?.content ?? retryUser?.content,
+      character,
+      group,
+    });
     let roleplaySystemPrompt = buildRoleplaySystemPrompt({
       character,
       group,
       characters,
       userName,
-      language: localStorage.getItem("local-character.desktop.language") ?? "es",
+      language: responseLanguage,
       memories: continuity.relevantMemories,
       continuity,
       continueGeneration: wantsContinue,
@@ -637,7 +681,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
         group,
         characters,
         userName,
-        language: localStorage.getItem("local-character.desktop.language") ?? "es",
+        language: responseLanguage,
         memories: continuity.relevantMemories,
         continuity,
         continueGeneration: wantsContinue,
@@ -688,18 +732,19 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
         const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
         const reply = templateResolver.cleanGeneratedContent(payload.choices?.[0]?.message?.content);
         if (!reply) throw new Error("La API no devolvió contenido");
+        if (activeGeneration.current !== generationId || conversationIdRef.current !== conversationId) return;
         assistantContent.current.set(generationId, reply);
         setMessages((current) => current.map((message) => message.id === assistantId ? { ...message, content: reply } : message));
-        finishGeneration("COMPLETED");
+        finishGeneration("COMPLETED", undefined, undefined, generationId);
       } catch (cause) {
         const message = cause instanceof TypeError ? "No se pudo conectar con la API seleccionada." : cause instanceof Error ? cause.message : String(cause);
-        finishGeneration("ERROR", message);
+        finishGeneration("ERROR", message, undefined, generationId);
       }
       return;
     }
     try {
       if (!localReady) {
-        finishGeneration("ERROR", "El modelo local todavía no está listo.");
+        finishGeneration("ERROR", "El modelo local todavía no está listo.", undefined, generationId);
         return;
       }
       // GPU is the default when the user has not explicitly selected CPU in
@@ -707,7 +752,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
       // any remainder is handled by the CPU automatically.
       await sendChatMessage({ prompt: roleplaySystemPrompt, messages: protocolMessages, characterName: character?.name ?? fallbackGroupCharacter?.name, userName, generationId, conversationId, messageId: assistantId, maxOutput: 512, context: contextLimit, gpuLayers: Number(localStorage.getItem("local-character.desktop.gpuLayers") ?? "-1") });
     } catch (cause) {
-      finishGeneration("ERROR", cause instanceof Error ? cause.message : String(cause));
+      finishGeneration("ERROR", cause instanceof Error ? cause.message : String(cause), undefined, generationId);
     }
   }
   const onComposerKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {

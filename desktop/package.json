@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "test:continuity": "node --experimental-strip-types scripts/continuity-smoke.mts",
     "test:memory": "node --experimental-strip-types scripts/semantic-memory-smoke.mts",
+    "test:output": "node --experimental-strip-types scripts/output-guard-smoke.mts",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

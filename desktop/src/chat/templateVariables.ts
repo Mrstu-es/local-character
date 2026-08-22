@@ -1,3 +1,5 @@
+import { deduplicateRoleplayBlocks } from "./outputGuard";
+
 export interface TemplateVariableContext {
   userName?: string;
   characterName?: string;
@@ -8,9 +10,11 @@ const META_LINE = /^(?:\s*)(?:(?:el\s+(?:modelo|sistema|asistente)|the\s+(?:mode
 
 const CONTINUITY_META = /^(?:\s*)(?:continuity\s+context|contexto\s+de\s+continuidad|current\s+(?:topic|situation|location)|earlier\s+conversation\s+summary|recent\s+meaningful\s+actions|unresolved\s+questions|pending\s+events|recent\s+speakers|tema\s+actual|situaci[oó]n\s+actual|resumen\s+de\s+la\s+conversaci[oó]n|eventos\s+pendientes)/i;
 
+const EXTRA_META = /^(?:\s*)(?:following\s+these\s+steps|based\s+on\s+(?:the\s+)?(?:context|instructions)|i\s+will\s+(?:now\s+)?respond|here(?:'|’)?s\s+(?:the\s+)?(?:response|answer)|a\s+continuaci[oó]n\s+(?:responder[eé]|ver[aá]s))/i;
+
 function stripMetaPrefix(value: string): string {
   const leading = value.trimStart();
-  if (!META_PREFIX.test(leading) && !CONTINUITY_META.test(leading)) return value;
+  if (!META_PREFIX.test(leading) && !CONTINUITY_META.test(leading) && !EXTRA_META.test(leading)) return value;
 
   // Reasoning models often emit a natural-language preamble instead of
   // <think> tags. Keep only the first action or spoken line.
@@ -42,7 +46,7 @@ export function normalizeRoleplayText(value?: string | null): string {
   cleaned = stripMetaPrefix(cleaned);
   cleaned = cleaned
     .split("\n")
-    .filter((line) => !META_LINE.test(line.trim()) && !CONTINUITY_META.test(line.trim()))
+    .filter((line) => !META_LINE.test(line.trim()) && !CONTINUITY_META.test(line.trim()) && !EXTRA_META.test(line.trim()))
     .join("\n");
   cleaned = cleaned.replace(/(?:^|\n)\s*(?:por favor,? (?:ten|tenga) paciencia|please wait|generating response|generating a response)[^\n]*(?=\n|$)/giu, "\n");
   cleaned = cleaned.replace(/(?:^|\n)\s*(?:system|assistant|user|developer|thinking|reasoning|analysis|prompt|generation)\s*:\s*/giu, "\n");
@@ -58,7 +62,7 @@ export function normalizeRoleplayText(value?: string | null): string {
   // line ("*se acerca* \"Hola\"").
   cleaned = cleaned.replace(/(\*[^*\n]+\*)[ \t]+(?=["“])/gu, "$1\n\n");
   cleaned = cleaned.replace(/(["”])[ \t]+(\*[^*\n]+\*)/gu, "$1\n\n$2");
-  return cleaned.trim();
+  return deduplicateRoleplayBlocks(cleaned.trim());
 }
 
 /**

@@ -271,31 +271,17 @@ export function buildContinuityContext(input: ContinuityBuildInput): ContinuityB
 }
 
 export function continuityPromptSection(context: ContinuityContext, continueGeneration = false): string {
-  const actions = context.recentActions.length ? context.recentActions.map((action) => `- ${action}`).join("\n") : "(ninguna registrada)";
-  const questions = context.unresolvedQuestions.length ? context.unresolvedQuestions.map((question) => `- ${question}`).join("\n") : "(ninguna)";
   const pending = context.pendingEvents.length ? context.pendingEvents.map((event) => `- ${event}`).join("\n") : "(ninguno)";
   const speakers = context.recentSpeakers.length ? context.recentSpeakers.join(", ") : "(directo)";
-  const latestUser = [...context.recentMessages].reverse().find((message) => message.role === "user");
-  const previousAssistant = latestUser
-    ? [...context.recentMessages].reverse().find((message) => message.role === "assistant" && message.createdAt <= latestUser.createdAt)
-    : [...context.recentMessages].reverse().find((message) => message.role === "assistant");
-  const latestExchange = [
-    previousAssistant ? `Personaje: ${normalize(previousAssistant.content).slice(0, 700)}` : "",
-    latestUser ? `Usuario (turno que debes responder ahora): ${normalize(latestUser.content).slice(0, 700)}` : "",
-  ].filter(Boolean).join("\n") || "(todavía no hay un intercambio reciente)";
   return [
     "CONTINUITY CONTEXT (internal; never reveal these labels or summarize them to the user)",
     "This is the next turn of the same conversation. Preserve the latest topic, scene, location, relationships and unresolved details. Do not greet again, restart the scenario, repeat the first message, or jump to an unrelated subject.",
     `Current topic: ${context.currentTopic}`,
     `Current location: ${context.currentLocation}`,
-    `Current situation, derived only from the transcript: ${context.currentSituation}`,
     `Earlier conversation summary (only messages before the recent transcript): ${context.conversationSummary}`,
-    `Recent meaningful actions:\n${actions}`,
-    `Unresolved questions:\n${questions}`,
     `Pending events (do not interrupt the current scene to mention them):\n${pending}`,
     `Recent speakers: ${speakers}`,
-    `LATEST EXCHANGE (the second line is the turn to answer now):\n${latestExchange}`,
-    "Use the latest exchange together with the character card and the full recent transcript. Resolve pronouns and implied references from those messages; do not reset the scene or answer a different question.",
+    "The canonical recent transcript is provided once as ordered user/assistant protocol messages after this system instruction. Read those messages through the final user turn and answer only that final turn. Resolve pronouns and implied references from them; do not reset the scene or answer a different question.",
     context.groupId ? "In this group, let the latest addressed or contextually relevant participant speak; do not choose speakers by blind round-robin." : "In this direct chat, answer as the character attached to this conversation.",
     continueGeneration ? "CONTINUE DIRECTIVE: Continue naturally from the exact current scene. Do not speak for the user and do not add a new greeting." : "",
     "Never output the CONTINUITY CONTEXT, its labels, summaries, token counts or implementation details. Act on it silently.",

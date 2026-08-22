@@ -29,8 +29,8 @@ body { margin: 0; min-width: 0; min-height: 100vh; overflow: hidden; background:
 button, input, textarea { font: inherit; }
 button { border: 0; color: inherit; cursor: pointer; }
 button:disabled { opacity: .45; cursor: not-allowed; }
-.app-shell { display: flex; width: 100%; height: 100vh; max-height: 100vh; overflow: hidden; }
-.sidebar { width: 238px; height: 100vh; flex: 0 0 238px; align-self: flex-start; min-height: 0; padding: 25px 15px 18px; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: rgba(14, 13, 19, .88); transition: width .18s ease, flex-basis .18s ease; }
+.app-shell { display: flex; width: 100%; height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; overflow: hidden; }
+.sidebar { width: 238px; height: 100vh; height: 100dvh; flex: 0 0 238px; align-self: flex-start; min-height: 0; padding: 25px 15px 18px; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: rgba(14, 13, 19, .88); transition: width .18s ease, flex-basis .18s ease; }
 .sidebar-collapsed .sidebar { width: 78px; flex-basis: 78px; }
 .brand-row { display: flex; align-items: center; gap: 10px; min-height: 43px; padding: 0 8px; }
 .brand-row strong, .brand-row span { display: block; white-space: nowrap; }
@@ -55,7 +55,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .backend-dot.error { color: var(--red); background: var(--red); }
 .runtime-spinner { flex: 0 0 auto; color: var(--purple); }
 .status-dot.offline { color: var(--red); background: var(--red); }
-.main-content { flex: 1 1 auto; width: auto; min-width: 0; max-width: none; height: 100vh; margin: 0; overflow-x: hidden; overflow-y: auto; padding: 32px clamp(28px, 4vw, 64px) 70px; scrollbar-gutter: stable; }
+.main-content { flex: 1 1 auto; width: auto; min-width: 0; max-width: none; height: 100vh; height: 100dvh; margin: 0; overflow-x: hidden; overflow-y: auto; padding: 32px clamp(28px, 4vw, 64px) 70px; scrollbar-gutter: stable; }
 .topbar { display: flex; align-items: flex-start; justify-content: space-between; min-height: 69px; }
 .eyebrow { color: var(--purple); font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
 h1, h2, h3, h4, p { margin: 0; }
@@ -186,24 +186,26 @@ h4 { font-size: 17px; }
 .group-avatar { display: grid; place-items: center; width: 54px; height: 54px; flex: 0 0 auto; border-radius: 17px; color: var(--purple); background: rgba(179,147,255,.12); }
 .list-section-title { margin: 18px 4px 4px; color: var(--purple); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
 .chat-list-panel { padding: 18px; }
-.dedicated-chat-screen { min-height: calc(100vh - 36px); display: flex; flex-direction: column; gap: 12px; }
-.main-content:has(.dedicated-chat-screen) > .topbar { display: none; }
-.main-content:has(.dedicated-chat-screen) { overflow: hidden; padding-bottom: 18px; }
-.dedicated-chat-screen-modern { height: 100%; min-height: 0; overflow: hidden; }
-.dedicated-chat-topbar { display: flex; align-items: center; gap: 10px; min-height: 60px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: rgba(18,17,23,.9); }
+.dedicated-chat-main { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 18px; }
+.dedicated-chat-main > .error-banner { flex: 0 0 auto; }
+.dedicated-chat-main > .dedicated-chat-screen { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; }
+.dedicated-chat-screen { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; overflow: hidden; }
+.dedicated-chat-screen-modern { height: auto; min-height: 0; overflow: hidden; }
+.dedicated-chat-topbar { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 60px; flex: 0 0 auto; padding: 8px 12px; border-bottom: 1px solid var(--line); background: rgba(18,17,23,.9); }
+.dedicated-chat-topbar > .icon-button, .dedicated-chat-topbar > .character-avatar { flex: 0 0 auto; }
 .dedicated-chat-topbar .character-avatar { width: 42px; height: 42px; border-radius: 13px; }
 .dedicated-chat-title { min-width: 0; flex: 1; }
 .dedicated-chat-title strong, .dedicated-chat-title span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dedicated-chat-title span { margin-top: 3px; color: var(--muted); font-size: 11px; }
-.dedicated-chat-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 4px; }
+.dedicated-chat-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; flex-wrap: wrap; min-width: 0; padding: 0 4px; }
 .dedicated-chat-actions .secondary-button { padding: 8px 11px; font-size: 11px; }
 .dedicated-chat-privacy { margin-left: auto; color: var(--muted); font-size: 11px; }
-.dedicated-chat-body { flex: 1; min-height: 0; }
-.dedicated-chat-body .chat-panel { min-height: calc(100vh - 215px); }
+.dedicated-chat-body { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; }
+.dedicated-chat-body .chat-panel { width: 100%; min-width: 0; min-height: 0; }
 .dedicated-chat-body .chat-header { display: none; }
 .dedicated-chat-body { display: flex; overflow: hidden; }
-.chat-panel-modern { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0 !important; height: 100%; position: relative; overflow: hidden; }
-.chat-content-shell { display: flex; flex: 1 1 auto; flex-direction: column; width: min(100%, 1200px); min-height: 0; margin-inline: auto; }
+.chat-panel-modern { position: relative; display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; min-width: 0; min-height: 0 !important; height: 100%; overflow: hidden; }
+.chat-content-shell { display: flex; flex: 1 1 auto; flex-direction: column; width: min(100%, 1200px); min-width: 0; min-height: 0; margin-inline: auto; overflow: hidden; }
 .chat-panel-modern .message-list { flex: 1 1 auto; width: 100%; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0; scrollbar-gutter: stable; }
 .message-thread-container { width: 100%; max-width: 1000px; min-height: 100%; margin-inline: auto; padding: 22px 24px 24px; box-sizing: border-box; }
 .chat-empty-compact { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 100%; color: var(--muted); font-size: 13px; }
@@ -423,13 +425,14 @@ h4 { font-size: 17px; }
 @media (max-width: 760px) {
   body { overflow: auto; }
   .app-shell { display: block; height: auto; max-height: none; min-height: 100vh; padding-bottom: 72px; }
+  .app-shell.chat-active { height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; min-height: 0; overflow: hidden; padding-bottom: 0; }
   .sidebar { position: fixed; z-index: 20; right: 0; bottom: 0; left: 0; width: 100%; height: 64px; min-height: 64px; flex-direction: row; align-items: center; padding: 7px 10px; border-top: 1px solid var(--line); border-right: 0; }
   .brand-row, .sidebar-toggle, .sidebar-footer { display: none; }
   .main-nav { display: flex; flex: 1; justify-content: space-around; gap: 4px; margin: 0; }
   .nav-item { flex: 1; min-height: 48px; border-radius: 10px; }
   .nav-item span { display: block; overflow: hidden; font-size: 10px; text-overflow: ellipsis; }
   .main-content { width: 100%; height: auto; min-height: 100vh; overflow: visible; padding: 20px 14px 28px; }
-  .main-content:has(.dedicated-chat-screen) { height: 100vh; min-height: 0; overflow: hidden; padding: 10px 10px 72px; }
+  .main-content.dedicated-chat-main { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; padding: 10px 10px 72px; }
   .topbar { min-height: 48px; }
   .topbar .eyebrow, .release-pill { display: none; }
   h1 { margin-top: 0; font-size: 24px; }
@@ -456,7 +459,7 @@ h4 { font-size: 17px; }
   .chat-messages { padding: 18px 12px; }
   .message-bubble { max-width: 85%; }
   .composer { margin: 0 12px 12px; }
-  .dedicated-chat-screen-modern { height: 100%; }
+  .dedicated-chat-screen-modern { flex: 1 1 auto; height: auto; }
   .chat-panel-modern .message-list { padding: 16px 9px; }
   .chat-panel-modern .composer-modern { width: calc(100% - 14px); margin: 8px 7px 8px; }
   .message-content-wrap { max-width: calc(100% - 40px); }
