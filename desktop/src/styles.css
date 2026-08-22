@@ -300,6 +300,12 @@ h4 { font-size: 17px; }
 .memory-tabs { display: flex; gap: 7px; overflow-x: auto; margin: 4px 0 10px; }
 .memory-tabs button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); background: transparent; }
 .memory-tabs button.selected { color: var(--text); background: rgba(179,147,255,.18); }
+.memory-record-list { display: grid; gap: 8px; min-height: 96px; max-height: min(48vh, 430px); overflow-y: auto; padding-right: 3px; }
+.memory-record { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-2); }
+.memory-record > div { min-width: 0; }
+.memory-record p { margin: 5px 0 0; color: var(--text); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.memory-kind { color: var(--purple); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.memory-record .icon-button { flex: 0 0 auto; width: 30px; height: 30px; min-height: 30px; color: var(--muted); }
 .chat-actions-menu { position: absolute; z-index: 20; right: 18px; top: 58px; display: grid; gap: 4px; min-width: 180px; padding: 8px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); box-shadow: var(--shadow); }
 .chat-actions-menu button { display: flex; align-items: center; gap: 7px; padding: 8px; border: 0; border-radius: 7px; color: var(--text); background: transparent; text-align: left; cursor: pointer; font: inherit; font-size: 12px; }
 .chat-actions-menu button:hover { background: rgba(179,147,255,.1); }

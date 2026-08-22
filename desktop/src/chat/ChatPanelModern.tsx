@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Bookmark, ChevronDown, MessageCircle, RotateCcw, Send, Sparkles, Square, UserRound } from "lucide-react";
-import type { CharacterRecord, ChatMessageRecord, ConversationRecord, EngineStatus, GroupRecord, ProviderRecord } from "../types";
+import type { CharacterRecord, ChatMessageRecord, ConversationRecord, EngineStatus, GroupRecord, ProviderRecord, SemanticMemoryRecord } from "../types";
 import {
   branchFromMessage,
   deleteMessage,
   isTauriRuntime,
   listMessages,
   getConversationSummary,
+  listSemanticMemories,
+  saveSemanticMemory,
   saveConversationSummary,
   listenToGeneration,
   rewindToMessage,
@@ -19,6 +21,7 @@ import MessageItem, { CharacterStreamingItem } from "./MessageItem";
 import { buildRoleplaySystemPrompt, roleplayHistory } from "./promptBuilder";
 import { buildContinuityContext, estimateTokens, type ContinuityContext } from "./continuity";
 import { conversationUserName, TemplateVariableResolver } from "./templateVariables";
+import { extractSemanticMemories, mergeSemanticMemories, semanticMemoryPromptText } from "./semanticMemory";
 
 interface ChatPanelModernProps {
   chatId: string;
@@ -32,6 +35,7 @@ interface ChatPanelModernProps {
   onPrefillConsumed?: () => void;
   onNotice?: (message: string) => void;
   onGeneratingChange?: (generating: boolean) => void;
+  onMemoryChanged?: () => void;
 }
 
 const now = () => new Date().toISOString();
@@ -78,7 +82,7 @@ function isRenderableMessage(message: ChatMessageRecord): boolean {
   return !["loading model", "llama.cpp", "llama-server", "available commands", "system is thinking", "el modelo está pensando", "el modelo esta pensando", "the model is thinking", "el usuario está solicitando", "el usuario esta solicitando", "system:", "developer:", "thinking:", "reasoning:", "analysis:", "prompt:", "generation:", "{{user}}", "{{ user }}", "{{char}}", "{{ char }}", "[prompt:", "[generation:", "<thinking>", "<think>", "</thinking>", "<response>", "<|im_start|>", "<|assistant|>"].some((marker) => lower.includes(marker));
 }
 
-export default function ChatPanelModern({ chatId, characters, conversations, groups, providers, engine, preferredProviderId, prefill, onPrefillConsumed, onNotice, onGeneratingChange }: ChatPanelModernProps) {
+export default function ChatPanelModern({ chatId, characters, conversations, groups, providers, engine, preferredProviderId, prefill, onPrefillConsumed, onNotice, onGeneratingChange, onMemoryChanged }: ChatPanelModernProps) {
   const conversation = conversations.find((item) => item.id === chatId);
   const group = groups.find((item) => item.id === chatId);
   const conversationId = conversation?.id ?? group?.id ?? chatId;
@@ -88,6 +92,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
   const templateResolver = useMemo(() => new TemplateVariableResolver({ userName, characterName: character?.name ?? fallbackGroupCharacter?.name }), [userName, character?.name, fallbackGroupCharacter?.name]);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [memories, setMemories] = useState<string[]>([]);
+  const [semanticMemories, setSemanticMemories] = useState<SemanticMemoryRecord[]>([]);
   const [conversationSummary, setConversationSummary] = useState<import("../types").ConversationSummaryRecord | null>(null);
   const [draft, setDraft] = useState("");
   const [actionMode, setActionMode] = useState(false);
@@ -114,6 +119,13 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
   const nearBottom = useRef(true);
   const isGenerating = generationState?.status === "WAITING_FIRST_TOKEN" || generationState?.status === "STREAMING" || generationState?.status === "COMPLETING";
   const waitingFirstToken = generationState?.status === "WAITING_FIRST_TOKEN";
+  const contextMemories = useMemo(
+    // relevantMemories uses the latest item as the tie-breaker. Semantic
+    // records are sorted strongest-first, so reverse them before combining
+    // to keep the highest-confidence record at the newest end.
+    () => [...memories, ...[...semanticMemories].reverse().map(semanticMemoryPromptText)],
+    [memories, semanticMemories],
+  );
 
   useEffect(() => {
     onGeneratingChange?.(Boolean(isGenerating));
@@ -141,6 +153,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     setError(null);
     setRetryAvailable(false);
     setConversationSummary(null);
+    setSemanticMemories([]);
     summaryRef.current = null;
     messageRecordsRef.current = [];
     lastUserMessage.current = null;
@@ -162,7 +175,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
       groupId: group?.id,
       messages: transcript,
       summary: summaryRef.current,
-      memories,
+      memories: contextMemories,
       contextLimit,
       reserveOutput: 512,
       systemTokenReserve: 2200,
@@ -172,7 +185,23 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
       setConversationSummary(result.summaryToPersist);
       await saveConversationSummary(result.summaryToPersist).catch(() => undefined);
     }
-  }, [character?.id, conversationId, engine.contextLength, fallbackGroupCharacter?.id, group?.id, memories]);
+  }, [character?.id, contextMemories, conversationId, engine.contextLength, fallbackGroupCharacter?.id, group?.id]);
+
+  const persistSemanticRecords = useCallback(async (sourceMessages: ChatMessageRecord[]) => {
+    const characterId = character?.id ?? fallbackGroupCharacter?.id;
+    if (!isTauriRuntime() || !characterId || !conversationId || sourceMessages.length === 0) return;
+    const extracted = extractSemanticMemories({
+      messages: sourceMessages,
+      characterId,
+      conversationId,
+      characterName: character?.name ?? fallbackGroupCharacter?.name ?? "Personaje",
+      userName,
+    });
+    if (!extracted.length) return;
+    await Promise.all(extracted.map((memory) => saveSemanticMemory(memory)));
+    setSemanticMemories((current) => mergeSemanticMemories(current, extracted));
+    onMemoryChanged?.();
+  }, [character?.id, character?.name, conversationId, fallbackGroupCharacter?.id, fallbackGroupCharacter?.name, onMemoryChanged, userName]);
 
   const finishGeneration = useCallback((status: "COMPLETED" | "CANCELLED" | "ERROR", failure?: string, finishReason?: string) => {
     const current = generationStateRef.current;
@@ -187,7 +216,11 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
       const nextMessages = messageRecordsRef.current.map((item) => item.id === assistantId ? completed : item);
       messageRecordsRef.current = nextMessages;
       setMessages(nextMessages);
-      if (isTauriRuntime()) void saveMessage(completed);
+      if (isTauriRuntime()) {
+        // Persist the source turn before its semantic memories because SQLite
+        // links each extracted record to that message with a foreign key.
+        void saveMessage(completed).then(() => persistSemanticRecords([completed]));
+      }
       void persistContinuitySummary(nextMessages);
     } else if (content.trim() && record) {
       const partial = { ...record, content, metadataJson: JSON.stringify(finalMetadata) };
@@ -216,7 +249,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     assistantContent.current.delete(current.generationId);
     if (finalError) setError(finalError);
     setRetryAvailable(Boolean(finalError));
-  }, [persistContinuitySummary, templateResolver]);
+  }, [persistContinuitySummary, persistSemanticRecords, templateResolver]);
 
   // Safety net only: normal completion comes from the backend terminal event.
   // A stalled provider must never leave the UI in an infinite writing state.
@@ -232,16 +265,36 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     if (!isTauriRuntime() || !conversationId) {
       setMessages([]);
       setMemories([]);
+      setSemanticMemories([]);
       setConversationSummary(null);
       return;
     }
     try {
-      const [loaded, savedSummary] = await Promise.all([listMessages(conversationId), getConversationSummary(conversationId)]);
+      const characterId = character?.id ?? fallbackGroupCharacter?.id;
+      const [loaded, savedSummary, savedSemantic] = await Promise.all([
+        listMessages(conversationId),
+        getConversationSummary(conversationId),
+        characterId ? listSemanticMemories(characterId, conversationId) : Promise.resolve([] as SemanticMemoryRecord[]),
+      ]);
       const normalized = loaded.map((message) => ({ ...message, content: message.role === "assistant" ? templateResolver.cleanGeneratedContent(message.content) : templateResolver.resolve(message.content) }));
       const renderable = normalized.filter(isRenderableMessage);
       const changed = normalized.filter((message, index) => message.content !== loaded[index].content);
       if (isTauriRuntime()) await Promise.all(changed.filter((message) => message.content.trim()).map((message) => saveMessage(message)));
       setMemories(renderable.filter((message) => message.pinned).map((message) => message.content));
+      const extracted = characterId ? extractSemanticMemories({
+        messages: renderable.slice(-40),
+        characterId,
+        conversationId,
+        characterName: character?.name ?? fallbackGroupCharacter?.name ?? "Personaje",
+        userName,
+      }) : [];
+      const savedByKey = new Map(savedSemantic.map((memory) => [memory.memoryKey, memory]));
+      const changedSemantic = extracted.filter((memory) => {
+        const saved = savedByKey.get(memory.memoryKey);
+        return !saved || saved.content !== memory.content || saved.sourceMessageId !== memory.sourceMessageId;
+      });
+      if (isTauriRuntime() && changedSemantic.length) await Promise.all(changedSemantic.map((memory) => saveSemanticMemory(memory)));
+      setSemanticMemories(mergeSemanticMemories(savedSemantic, extracted));
       // Si una respuesta antigua solo contenía razonamiento/metadatos, la
       // normalización la deja vacía. Trátala como mensaje fantasma también
       // para que no reaparezca al volver a abrir la conversación.
@@ -254,7 +307,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [conversationId, templateResolver]);
+  }, [character?.id, character?.name, conversationId, fallbackGroupCharacter?.id, fallbackGroupCharacter?.name, templateResolver, userName]);
 
   useEffect(() => { void reloadMessages(); }, [reloadMessages]);
 
@@ -430,8 +483,9 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     if (isTauriRuntime()) await saveMessage(saved);
     setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? saved : item) : [...current, saved]);
     setMemories((current) => nextPinned ? [...current.filter((item) => item !== message.content), message.content] : current.filter((item) => item !== message.content));
+    onMemoryChanged?.();
     notify(nextPinned ? "Mensaje guardado en memoria" : "Mensaje quitado de memoria");
-  }, [conversation, greetingMessage, messages, notify]);
+  }, [conversation, greetingMessage, messages, notify, onMemoryChanged]);
 
   const branchMessage = useCallback(async (messageId: string) => {
     if (!conversation || !isTauriRuntime()) {
@@ -534,7 +588,10 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
     try {
       if (isTauriRuntime()) {
         if (initial) await saveMessage(initial);
-        if (user) await saveMessage(user);
+        if (user) {
+          await saveMessage(user);
+          void persistSemanticRecords([user]);
+        }
       }
     } catch (cause) {
       finishGeneration("ERROR", cause instanceof Error ? cause.message : String(cause));
@@ -551,7 +608,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
       greeting: initial,
       currentMessage: user,
       summary: summaryRef.current,
-      memories,
+      memories: contextMemories,
       contextLimit,
       reserveOutput: 512,
       systemTokenReserve: 2200,
@@ -608,7 +665,7 @@ export default function ChatPanelModern({ chatId, characters, conversations, gro
         contextLength: engine.contextLength ?? null,
         system: roleplaySystemPrompt,
         messages: protocolMessages,
-        memoryCount: memories.length,
+        memoryCount: contextMemories.length,
         loreCount: character?.lore?.length ?? 0,
         continuity: {
           currentTopic: continuity.currentTopic,

@@ -39,6 +39,7 @@ class MemoryOrchestrator(
     private val deduplicator: MemoryDeduplicator = MemoryDeduplicator(),
     private val explicitDetector: ExplicitMemoryIntentDetector = ExplicitMemoryIntentDetector(),
     private val forgetDetector: MemoryForgetIntentDetector = MemoryForgetIntentDetector(),
+    private val opinionDetector: CharacterOpinionDetector = CharacterOpinionDetector(),
 ) {
     suspend fun handleManualIntents(
         message: ChatMessage,
@@ -99,6 +100,22 @@ class MemoryOrchestrator(
                 ))
             }
         }
+    }
+
+    /** Stores explicit character opinions immediately, before the slower extraction pass. */
+    suspend fun rememberCharacterOpinions(
+        characterMessage: ChatMessage,
+        character: Character,
+        conversation: Conversation,
+        settings: MemorySettings,
+    ): Int {
+        if (!settings.intelligentMemory) return 0
+        val candidates = opinionDetector.detect(characterMessage.content, character.name)
+        candidates.forEach { candidate ->
+            persist(candidate, null, characterMessage, character, conversation, settings)
+        }
+        if (candidates.isNotEmpty()) debug("Character opinions stored immediately: ${candidates.size}")
+        return candidates.size
     }
 
     suspend fun processAfterTurn(
@@ -163,7 +180,11 @@ class MemoryOrchestrator(
     ): ConflictAction {
         val now = System.currentTimeMillis()
         val scopedConversation = if (settings.shareAcrossChats) null else conversation.id
-        val sourceId = if (candidate.origin == MemoryOrigin.CHARACTER_STATED || userMessage == null) {
+        val sourceId = if (
+            candidate.origin == MemoryOrigin.CHARACTER_STATED ||
+            candidate.origin == MemoryOrigin.CHARACTER_INFERENCE ||
+            userMessage == null
+        ) {
             characterMessage.id
         } else userMessage.id
         val memory = Memory(

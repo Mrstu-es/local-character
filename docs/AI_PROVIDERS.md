@@ -57,6 +57,8 @@ No se codifican IDs de modelos actuales. La pantalla usa el catálogo que devuel
 
 ## Configuración y API Keys
 
+OpenRouter aparece como proveedor integrado y preseleccionado en el flujo de configuración. Al guardar una API Key válida, la aplicación consulta automáticamente su catálogo y, si el usuario todavía usa el modelo local global, selecciona el primer modelo gratuito disponible como modelo predeterminado. La clave se guarda únicamente en el dispositivo; no se incluye ninguna credencial compartida en el APK, instalador, repositorio ni compilación.
+
 Ruta: **Ajustes → Proveedores de IA**.
 
 La aplicación funciona con BYOK: no incluye una clave maestra. Cada clave:

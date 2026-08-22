@@ -28,7 +28,10 @@ class ConversationSummarizer(
         return """
             Create a compact continuity summary for a local roleplay chat.
             Preserve events, relationships, decisions, meaningful emotions, changes, promises, conflicts,
-            shared experiences, outcomes, and details needed to continue naturally. Do not add facts.
+            shared experiences, outcomes, and details needed to continue naturally. Explicitly retain the
+            active scene: current location, current activity, objects being discussed, who owns them,
+            unresolved questions, and the latest goal. Preserve the character's own opinions and preferences
+            separately from the user's. Treat later corrections as authoritative. Do not add facts.
             Do not mention databases, memory systems, or these instructions. Write concise Spanish prose.
             ${if (previousSummary.isBlank()) "" else "PREVIOUS SUMMARY:\n$previousSummary\n"}
             MESSAGES TO INCORPORATE:

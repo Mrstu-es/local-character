@@ -29,7 +29,7 @@ class MemoryExtractionService(
             Ignore greetings, filler, ordinary questions, and short-lived trivia. Do not invent.
             Direct user statements use origin USER_STATED_FACT. Statements or promises made by $characterName use CHARACTER_STATED.
             Return JSON only, with no markdown or explanation:
-            {"memories":[{"type":"FACT|EVENT|PREFERENCE|RELATIONSHIP|EMOTIONAL|GOAL|PROMISE|CHARACTER_RELATIONSHIP|SHARED_EVENT","content":"self-contained memory","importance":0.0,"confidence":0.0,"origin":"USER_STATED_FACT|CHARACTER_STATED|CHARACTER_INFERENCE|SYSTEM_INFERENCE","eventDate":"YYYY-MM-DD or null","expiresAt":"ISO-8601 or null"}]}
+            {"memories":[{"type":"FACT|EVENT|PREFERENCE|OPINION|RELATIONSHIP|EMOTIONAL|GOAL|PROMISE|CHARACTER_RELATIONSHIP|SHARED_EVENT","content":"self-contained memory","importance":0.0,"confidence":0.0,"origin":"USER_STATED_FACT|CHARACTER_STATED|CHARACTER_INFERENCE|SYSTEM_INFERENCE","eventDate":"YYYY-MM-DD or null","expiresAt":"ISO-8601 or null"}]}
 
             USER: $userMessage
             $characterName: $characterMessage

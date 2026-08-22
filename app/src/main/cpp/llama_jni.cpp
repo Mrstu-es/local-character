@@ -102,6 +102,29 @@ std::string friendly_native_error() {
 
 std::string apply_model_chat_template(const std::string &raw_prompt) {
     if (g_chat_template_mode == "RAW") return raw_prompt;
+
+    // Prefer the template embedded in the GGUF for every built-in mode, not only
+    // AUTO. This keeps Qwen/reasoning models on llama.cpp's supported
+    // `enable_thinking=false` path while preserving the explicit-mode fallbacks
+    // below for older or incomplete GGUF metadata.
+    if (g_chat_template_mode != "CUSTOM") {
+        try {
+            auto templates = common_chat_templates_init(g_model, "");
+            common_chat_templates_inputs inputs;
+            inputs.messages.push_back({"user", raw_prompt});
+            inputs.add_generation_prompt = true;
+            inputs.use_jinja = true;
+            inputs.enable_thinking = false;
+            const auto formatted = common_chat_templates_apply(templates.get(), inputs).prompt;
+            if (!formatted.empty()) {
+                LOGI("Applied embedded Jinja chat template with thinking disabled (%zu bytes)", formatted.size());
+                return formatted;
+            }
+        } catch (const std::exception & error) {
+            LOGE("Embedded Jinja chat template failed, trying selected fallback: %s", error.what());
+        }
+    }
+
     if (g_chat_template_mode == "CHAT_ML" || g_chat_template_mode == "QWEN") {
         return "<|im_start|>system\n" + raw_prompt + "<|im_end|>\n<|im_start|>assistant\n";
     }
@@ -120,25 +143,8 @@ std::string apply_model_chat_template(const std::string &raw_prompt) {
         else result.append(raw_prompt);
         return result;
     }
-    // AUTO uses llama.cpp's full Minja/Jinja path. The legacy public C API below only
-    // recognizes a finite set of templates and silently loses formatting for newer GGUFs.
-    try {
-        auto templates = common_chat_templates_init(g_model, "");
-        common_chat_templates_inputs inputs;
-        inputs.messages.push_back({"user", raw_prompt});
-        inputs.add_generation_prompt = true;
-        inputs.use_jinja = true;
-        // Reasoning models such as Qwen3 still work, but avoid spending the whole mobile
-        // token budget in a hidden thinking block by default.
-        inputs.enable_thinking = false;
-        const auto formatted = common_chat_templates_apply(templates.get(), inputs).prompt;
-        if (!formatted.empty()) {
-            LOGI("Applied embedded Jinja chat template (%zu bytes)", formatted.size());
-            return formatted;
-        }
-    } catch (const std::exception & error) {
-        LOGE("Embedded Jinja template failed, trying legacy formatter: %s", error.what());
-    }
+    // AUTO reaches this legacy path only when the embedded template is absent or
+    // cannot be rendered by the bundled llama.cpp version.
     const char *chat_template = llama_model_chat_template(g_model, nullptr);
     if (chat_template == nullptr || chat_template[0] == '\0') return raw_prompt;
     const llama_chat_message message = {"user", raw_prompt.c_str()};

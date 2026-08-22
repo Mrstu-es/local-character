@@ -1,0 +1,20 @@
+changelog:
+  categories:
+    - title: Funciones nuevas
+      labels:
+        - enhancement
+        - feature
+    - title: Correcciones
+      labels:
+        - bug
+        - fix
+    - title: Rendimiento y experiencia
+      labels:
+        - performance
+        - ux
+    - title: Otros cambios
+      labels:
+        - "*"
+  exclude:
+    labels:
+      - skip-changelog

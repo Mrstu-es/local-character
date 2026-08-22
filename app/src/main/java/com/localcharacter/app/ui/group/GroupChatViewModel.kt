@@ -18,6 +18,7 @@ import com.localcharacter.app.domain.group.GroupTurnOrchestrator
 import com.localcharacter.app.domain.group.GroupContextResolver
 import com.localcharacter.app.domain.model.Character
 import com.localcharacter.app.domain.model.ChatMessage
+import com.localcharacter.app.domain.model.Conversation
 import com.localcharacter.app.domain.model.GroupConversation
 import com.localcharacter.app.domain.model.GroupMessage
 import com.localcharacter.app.domain.model.GroupMessageRole
@@ -253,6 +254,7 @@ class GroupChatViewModel(
             ModelLoadPolicy.effectiveContextSize(configured.contextSize, activeModel?.contextSize)
         } else (model?.contextLength ?: 8_192).coerceIn(512, 131_072)
         val maxTokens = minOf(configured.maxTokens, model?.maxOutputTokens ?: configured.maxTokens)
+        val groupMemorySettings = container.settings.memorySettings.first()
         val transcript = container.groups.recent(groupId, 60)
         val transcriptAsMessages = transcript.map { message ->
             ChatMessage(
@@ -304,7 +306,7 @@ class GroupChatViewModel(
             userPersona = persona.description,
             messages = (transcriptAsMessages.filterNot { userInput != null && it.role == MessageRole.USER && it.content == userInput } + listOfNotNull(current)).takeLast(70),
             loreEntries = resolvedContext.lore,
-            memories = if (container.settings.memorySettings.first().intelligentMemory) {
+            memories = if (groupMemorySettings.intelligentMemory) {
                 container.memories.candidates(character.id, groupId, group.userPersonaId, false)
             } else emptyList(),
             conversationSummary = container.groups.activeMemories(groupId).joinToString("\n") { it.content },
@@ -335,6 +337,28 @@ class GroupChatViewModel(
                 val done = response.copy(content = RoleplayTextFormatter.normalize(buffer.toString()), isComplete = true)
                 mutableStreaming.value = done
                 container.groups.saveMessage(done)
+                runCatching {
+                    container.memoryOrchestrator.rememberCharacterOpinions(
+                        characterMessage = ChatMessage(
+                            id = done.id,
+                            conversationId = groupId,
+                            role = MessageRole.CHARACTER,
+                            content = done.content,
+                            isComplete = true,
+                            createdAt = done.createdAt,
+                        ),
+                        character = character,
+                        conversation = Conversation(
+                            id = groupId,
+                            characterId = character.id,
+                            title = group.name,
+                            userPersonaId = group.userPersonaId,
+                        ),
+                        settings = groupMemorySettings.copy(shareAcrossChats = false),
+                    )
+                }.onFailure {
+                    if (AppBuildInfo.DEBUG) Log.d("GroupMemory", "Opinion memory skipped: ${it.message}")
+                }
                 maybeSpeak(character, done)
                 return done.content
             } else mutableError.value = "El proveedor no generó texto para ${character.name}."

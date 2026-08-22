@@ -4,19 +4,22 @@ Local Character es una aplicación Android gratuita para conversar con personaje
 
 > **Roleplay con personajes, local y gratuito.** Android y Windows en un mismo proyecto.
 
-## Descargas
+## Descargas directas
 
-- [Última release y todos los instaladores](https://github.com/Mrstu-es/local-character/releases)
-- [APK Android](https://github.com/Mrstu-es/local-character/releases/latest)
-- [Instalador Windows EXE/MSI](https://github.com/Mrstu-es/local-character/releases/latest)
+| Plataforma | Archivo recomendado | Alternativa |
+| --- | --- | --- |
+| Android 8.0+ | [Descargar APK](https://github.com/Mrstu-es/local-character/releases/latest/download/Local-Character-Android.apk) | [Ver todas las versiones](https://github.com/Mrstu-es/local-character/releases) |
+| Windows 10/11 x64 | [Descargar instalador EXE](https://github.com/Mrstu-es/local-character/releases/latest/download/Local-Character-Windows-Setup.exe) | [Descargar MSI](https://github.com/Mrstu-es/local-character/releases/latest/download/Local-Character-Windows.msi) |
+
+Cada etiqueta `v*` compila Android y Windows en GitHub Actions y publica juntos el APK, el EXE, el MSI y sus sumas SHA-256. Así, estos enlaces siempre apuntan a la versión más reciente.
 
 ## Local Character Desktop (Windows)
 
-La edición Desktop lleva la experiencia de roleplay a Windows 10/11 x64. Incluye chat dedicado, biblioteca y repositorios de personajes, grupos, memoria, voces TTS, APIs externas, modelos GGUF y un motor llama.cpp real con streaming cancelable. Detecta CPU, RAM, NVIDIA/Intel y Vulkan; permite elegir GPU, CPU o modo híbrido y prioriza la GPU discreta para cargar más capas del modelo.
+La edición Desktop lleva la experiencia de roleplay a Windows 10/11 x64. Incluye chat dedicado, biblioteca y repositorios de personajes, grupos, memoria, voces TTS, APIs externas, modelos GGUF y un motor llama.cpp real con streaming cancelable. Detecta CPU, RAM, NVIDIA/Intel y Vulkan; permite elegir GPU, CPU o modo híbrido y prioriza la GPU discreta para cargar más capas del modelo. El contexto combina la ficha completa, la escena, el historial reciente, un resumen acumulativo y recuerdos persistentes para mantener continuidad sin perder los últimos turnos.
 
-Consulta la [descripción completa de Desktop](docs/DESKTOP_VERSION.md), las [notas de la release](docs/RELEASE_NOTES_0.2.0.md) y las [capturas de Android y Windows](docs/screenshots/).
+Consulta la [descripción completa de Desktop](docs/DESKTOP_VERSION.md), las [notas de Local Character 0.3.0](docs/RELEASE_NOTES_0.3.0.md) y las [capturas de Android y Windows](docs/screenshots/).
 
-## Local Character Desktop
+## Código y arquitectura de Desktop
 
 La carpeta [`desktop/`](desktop/) contiene una aplicación Tauri 2 independiente para Windows 10/11 x64. Su primer objetivo es probar modelos GGUF grandes con CPU, CUDA o Vulkan, medir TTFT/tokens por segundo y conversar con streaming local. No reemplaza ni modifica la aplicación Android.
 
@@ -152,3 +155,4 @@ La app no incluye analítica ni telemetría. En modo Local GGUF, las conversacio
 - [Sistema de voces](docs/VOICE_SYSTEM.md)
 - [Persona del usuario](docs/USER_PERSONA.md)
 - [Progreso y problemas conocidos](docs/PROGRESS.md)
+- [Firma y publicación de releases](docs/RELEASE_SIGNING.md)

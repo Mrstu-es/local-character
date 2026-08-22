@@ -4,6 +4,8 @@ import com.localcharacter.app.domain.model.Character
 import com.localcharacter.app.domain.model.ChatMessage
 import com.localcharacter.app.domain.model.MessageRole
 import com.localcharacter.app.domain.model.Memory
+import com.localcharacter.app.domain.model.MemoryOrigin
+import com.localcharacter.app.domain.model.MemoryType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -63,6 +65,31 @@ class PromptBuilderTest {
             PromptRequest(character = character, messages = listOf(message), responseLanguage = "Spanish"),
         )
         assertTrue(result.text.contains("Always answer in Spanish"))
+    }
+
+    @Test fun `current question is anchored to the immediately preceding scene`() {
+        val greeting = ChatMessage("a1", "c", MessageRole.CHARACTER, "*Astra busca su cuaderno.* No recuerdo dónde lo dejé.")
+        val question = ChatMessage("u1", "c", MessageRole.USER, "¿Dónde crees que lo dejaste?")
+        val result = PromptBuilder().build(
+            PromptRequest(character = character, userName = "Tadeo", messages = listOf(greeting, question)),
+        )
+        assertTrue(result.text.contains("CONVERSATION CONTINUITY"))
+        assertTrue(result.text.contains("IMMEDIATE SCENE ANCHOR"))
+        assertTrue(result.text.contains("No recuerdo dónde lo dejé"))
+        assertTrue(result.text.contains("¿Dónde crees que lo dejaste?"))
+        assertTrue(result.text.indexOf("Turn 1") < result.text.indexOf("CURRENT USER MESSAGE"))
+    }
+
+    @Test fun `character opinions have explicit ownership in prompt`() {
+        val opinion = Memory(
+            id = "op1", characterId = character.id, type = MemoryType.OPINION,
+            content = "Astra expressed this opinion: honesty matters.",
+            origin = MemoryOrigin.CHARACTER_STATED, importance = 0.9f,
+        )
+        val current = ChatMessage("u1", "c", MessageRole.USER, "¿Qué opinas de mentir?")
+        val result = PromptBuilder().build(PromptRequest(character = character, messages = listOf(current), memories = listOf(opinion)))
+        assertTrue(result.text.contains("CHARACTER'S PERSISTENT OPINIONS"))
+        assertTrue(result.text.contains("honesty matters"))
     }
 
     @Test fun `oversized character card is bounded to the context`() {

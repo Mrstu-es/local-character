@@ -45,4 +45,18 @@ const continued = buildContinuityContext({
 assert.ok(continued.context.recentMessages.length > 0);
 assert.ok(!continued.context.recentMessages.some((item) => item.id === result.summaryToPersist?.summaryUntilMessageId), "El corte del resumen no debe repetirse en el historial reciente");
 assert.notEqual(continued.context.recentMessages.at(-1)?.role, "user", "Continue no crea un mensaje de usuario artificial");
+
+const repaired = buildContinuityContext({
+  conversationId: "context-repair-test",
+  messages: [
+    message("r1", "assistant", "*Busca la prenda por la habitación.* ¿Me ayudas?"),
+    message("r2", "user", "¿Dónde crees que la dejaste?"),
+    message("r3", "assistant", "*Hace una pausa.* No se deja claro qué tenemos entre manos."),
+  ],
+  currentMessage: message("r4", "user", "Mira en la ropa sucia."),
+  contextLimit: 2048,
+  reserveOutput: 256,
+});
+assert.ok(!repaired.context.recentMessages.some((item) => item.id === "r3"), "Un turno que declara que el contexto no está claro no debe contaminar el siguiente prompt");
+assert.match(repaired.context.currentSituation, /Mira en la ropa sucia/);
 console.log(`continuity smoke ok: ${continued.context.recentMessageCount} recientes, ${continued.context.tokenEstimate} tokens estimados`);

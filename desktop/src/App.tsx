@@ -202,7 +202,7 @@ function App() {
         <header className="topbar">
           <div><span className="eyebrow">LOCAL-FIRST AI WORKSPACE</span><h1>{navItems.find((item) => item.id === view)?.label}</h1></div>
           <div className="topbar-actions">
-            <span className="release-pill">0.1.0-alpha</span>
+            <span className="release-pill">0.3.0</span>
             <button className="icon-button" onClick={() => void refresh()} aria-label="Actualizar" disabled={busy}><RefreshCw size={17} className={busy ? "spin" : ""} /></button>
           </div>
         </header>

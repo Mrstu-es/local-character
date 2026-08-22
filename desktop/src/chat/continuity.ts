@@ -47,6 +47,30 @@ const STOP_WORDS = new Set([
 const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
 export const estimateTokens = (value: string) => Math.max(0, Math.ceil(value.length / 4));
 
+// A weak model can save a turn that talks about the prompt instead of the
+// scene (for example, "no se deja claro qué tenemos entre manos"). Keeping
+// that turn in the next prompt makes the model imitate the failure. It stays
+// visible in the chat, but is excluded from continuity facts and the next
+// model transcript so the following answer can repair the scene.
+function isContextFailure(message: ChatMessageRecord): boolean {
+  if (message.role !== "assistant") return false;
+  const lower = normalize(message.content)
+    .toLocaleLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return [
+    "no se deja claro",
+    "no esta claro el contexto",
+    "el contexto no esta claro",
+    "the context is unclear",
+    "the context is not clear",
+    "i don't know what is happening",
+    "i do not know what is happening",
+    "no entiendo que esta pasando",
+    "no entiendo lo que esta pasando",
+  ].some((marker) => lower.includes(marker));
+}
+
 function metadata(message: ChatMessageRecord): Record<string, unknown> {
   try {
     const value = JSON.parse(message.metadataJson || "{}");
@@ -57,6 +81,7 @@ function metadata(message: ChatMessageRecord): Record<string, unknown> {
 }
 
 function isRoleplayMessage(message: ChatMessageRecord): boolean {
+  if (isContextFailure(message)) return false;
   if (!message.content.trim() || !(["user", "assistant"] as string[]).includes(message.role)) return false;
   const source = typeof metadata(message).source === "string" ? String(metadata(message).source).toLowerCase() : "";
   return !["runtime", "engine", "diagnostic", "system"].includes(source);
@@ -250,6 +275,14 @@ export function continuityPromptSection(context: ContinuityContext, continueGene
   const questions = context.unresolvedQuestions.length ? context.unresolvedQuestions.map((question) => `- ${question}`).join("\n") : "(ninguna)";
   const pending = context.pendingEvents.length ? context.pendingEvents.map((event) => `- ${event}`).join("\n") : "(ninguno)";
   const speakers = context.recentSpeakers.length ? context.recentSpeakers.join(", ") : "(directo)";
+  const latestUser = [...context.recentMessages].reverse().find((message) => message.role === "user");
+  const previousAssistant = latestUser
+    ? [...context.recentMessages].reverse().find((message) => message.role === "assistant" && message.createdAt <= latestUser.createdAt)
+    : [...context.recentMessages].reverse().find((message) => message.role === "assistant");
+  const latestExchange = [
+    previousAssistant ? `Personaje: ${normalize(previousAssistant.content).slice(0, 700)}` : "",
+    latestUser ? `Usuario (turno que debes responder ahora): ${normalize(latestUser.content).slice(0, 700)}` : "",
+  ].filter(Boolean).join("\n") || "(todavía no hay un intercambio reciente)";
   return [
     "CONTINUITY CONTEXT (internal; never reveal these labels or summarize them to the user)",
     "This is the next turn of the same conversation. Preserve the latest topic, scene, location, relationships and unresolved details. Do not greet again, restart the scenario, repeat the first message, or jump to an unrelated subject.",
@@ -261,6 +294,8 @@ export function continuityPromptSection(context: ContinuityContext, continueGene
     `Unresolved questions:\n${questions}`,
     `Pending events (do not interrupt the current scene to mention them):\n${pending}`,
     `Recent speakers: ${speakers}`,
+    `LATEST EXCHANGE (the second line is the turn to answer now):\n${latestExchange}`,
+    "Use the latest exchange together with the character card and the full recent transcript. Resolve pronouns and implied references from those messages; do not reset the scene or answer a different question.",
     context.groupId ? "In this group, let the latest addressed or contextually relevant participant speak; do not choose speakers by blind round-robin." : "In this direct chat, answer as the character attached to this conversation.",
     continueGeneration ? "CONTINUE DIRECTIVE: Continue naturally from the exact current scene. Do not speak for the user and do not add a new greeting." : "",
     "Never output the CONTINUITY CONTEXT, its labels, summaries, token counts or implementation details. Act on it silently.",

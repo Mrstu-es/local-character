@@ -8,8 +8,8 @@ use crate::model_registry::inspect_gguf;
 use crate::models::{
     CharacterRecord, ChatMessageRecord, ConversationRecord, ConversationSummaryRecord,
     ExploreFilterCatalog, GroupRecord, ModelRecord, ProviderRecord, RemoteCharacterRecord,
-    RepositoryProbe, RepositorySourceRecord, RepositorySyncResult, SuspiciousMessageRecord,
-    VoiceModelRecord, VoiceRepositoryRecord, VoiceRepositorySyncResult,
+    RepositoryProbe, RepositorySourceRecord, RepositorySyncResult, SemanticMemoryRecord,
+    SuspiciousMessageRecord, VoiceModelRecord, VoiceRepositoryRecord, VoiceRepositorySyncResult,
 };
 use crate::native_process;
 use crate::repository;
@@ -82,7 +82,7 @@ pub fn get_diagnostics(state: State<'_, AppState>) -> Result<AppDiagnostics, Str
         data_path: database.path.to_string_lossy().to_string(),
         schema_version: database.schema_version()?,
         engine: engine.get_status(),
-        llama_release: "b10218 / de69995".into(),
+        llama_release: "b10434 / 7e4c0a968".into(),
     })
 }
 
@@ -943,6 +943,54 @@ pub fn save_conversation_summary(
         .map_err(|_| "SQLite bloqueado".to_string())?;
     database.upsert_conversation_summary(&summary)?;
     Ok(summary)
+}
+
+#[tauri::command]
+pub fn list_semantic_memories(
+    character_id: String,
+    conversation_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SemanticMemoryRecord>, String> {
+    if character_id.trim().is_empty() || conversation_id.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut database = state
+        .database
+        .lock()
+        .map_err(|_| "SQLite bloqueado".to_string())?;
+    database.list_semantic_memories(&character_id, &conversation_id)
+}
+
+#[tauri::command]
+pub fn save_semantic_memory(
+    memory: SemanticMemoryRecord,
+    state: State<'_, AppState>,
+) -> Result<SemanticMemoryRecord, String> {
+    const ALLOWED_KINDS: &[&str] = &["fact", "preference", "opinion", "relationship", "event"];
+    if memory.character_id.trim().is_empty() || memory.conversation_id.trim().is_empty() {
+        return Err("La memoria necesita un personaje y una conversacion".into());
+    }
+    if !ALLOWED_KINDS.contains(&memory.kind.as_str()) {
+        return Err("Tipo de memoria no permitido".into());
+    }
+    if memory.content.trim().len() < 3 || memory.content.chars().count() > 320 {
+        return Err("La memoria debe contener entre 3 y 320 caracteres".into());
+    }
+    let mut database = state
+        .database
+        .lock()
+        .map_err(|_| "SQLite bloqueado".to_string())?;
+    database.upsert_semantic_memory(&memory)?;
+    Ok(memory)
+}
+
+#[tauri::command]
+pub fn delete_semantic_memory(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut database = state
+        .database
+        .lock()
+        .map_err(|_| "SQLite bloqueado".to_string())?;
+    database.delete_semantic_memory(&id)
 }
 
 #[tauri::command]

@@ -146,7 +146,7 @@ data class ChatMessage(
 )
 
 enum class MemoryType {
-    FACT, EVENT, PREFERENCE, RELATIONSHIP, EMOTIONAL, GOAL, PROMISE,
+    FACT, EVENT, PREFERENCE, OPINION, RELATIONSHIP, EMOTIONAL, GOAL, PROMISE,
     CHARACTER_RELATIONSHIP, SHARED_EVENT,
 }
 
@@ -314,8 +314,8 @@ data class ModelDescriptor(
 )
 
 data class GenerationSettings(
-    val temperature: Float = 0.85f,
-    val topP: Float = 0.92f,
+    val temperature: Float = 0.45f,
+    val topP: Float = 0.90f,
     val topK: Int = 40,
     val minP: Float = 0.05f,
     val repeatPenalty: Float = 1.08f,
@@ -328,6 +328,7 @@ data class GenerationSettings(
         val Creative = GenerationSettings(temperature = 1.05f, topP = 0.95f, topK = 60)
         val Balanced = GenerationSettings()
         val Precise = GenerationSettings(temperature = 0.45f, topP = 0.8f, topK = 30)
-        val Roleplay = GenerationSettings(temperature = 0.95f, topP = 0.93f, topK = 50, repeatPenalty = 1.12f)
+        // Small 3B roleplay models lose scene coherence quickly above ~0.6.
+        val Roleplay = GenerationSettings(temperature = 0.60f, topP = 0.90f, topK = 40, repeatPenalty = 1.08f)
     }
 }

@@ -5,11 +5,14 @@ import com.localcharacter.app.domain.model.Character
 import com.localcharacter.app.domain.model.ChatMessage
 import com.localcharacter.app.domain.model.LoreEntry
 import com.localcharacter.app.domain.model.Memory
+import com.localcharacter.app.domain.model.MemoryOrigin
+import com.localcharacter.app.domain.model.MemoryType
 import com.localcharacter.app.domain.model.MessageRole
 import com.localcharacter.app.llm.provider.LlmMessage
 import com.localcharacter.app.llm.provider.LlmRole
 import com.localcharacter.app.domain.conversation.GenerationMode
 import com.localcharacter.app.domain.conversation.GenerationModeResolver
+import com.localcharacter.app.domain.conversation.RoleplayTextFormatter
 import com.localcharacter.app.domain.conversation.TemplateVariableResolver
 import com.localcharacter.app.domain.model.ContentMode
 
@@ -80,12 +83,30 @@ class PromptBuilder(
         val currentMessage = if (request.generationMode == GenerationMode.NORMAL_REPLY) {
             request.messages.lastOrNull { it.role == MessageRole.USER }
         } else null
-        val earlierMessages = if (currentMessage == null) request.messages else request.messages.filterNot { it.id == currentMessage.id }
-        val recentText = request.messages.takeLast(8).joinToString("\n") { it.content }
+        val rawEarlierMessages = if (currentMessage == null) request.messages else request.messages.filterNot { it.id == currentMessage.id }
+        // Never feed a partial generation or visible reasoning leaked by an older
+        // model back into the next response. User text remains untouched.
+        val earlierMessages = rawEarlierMessages.mapNotNull { message ->
+            if (!message.isComplete || message.content.isBlank()) return@mapNotNull null
+            if (message.role != MessageRole.CHARACTER) return@mapNotNull message
+            RoleplayTextFormatter.normalize(message.content)
+                .takeIf(String::isNotBlank)
+                ?.let { message.copy(content = it) }
+        }
+        val recentText = (earlierMessages + listOfNotNull(currentMessage))
+            .takeLast(16)
+            .joinToString("\n") { it.content }
         val matchedLore = loreMatcher.match(request.loreEntries, recentText)
 
         val rawEssential = buildList {
-            add("SYSTEM\nYou are roleplaying as ${character.name}. Stay consistent, remain fully in character, and never decide the user's actions. Reply directly as the character without mentioning the model, prompts, reasoning, or generation process. Use clean roleplay formatting: actions between single asterisks and dialogue in natural paragraphs, with a blank line between action and dialogue. Never emit double-asterisk action blocks, control tokens, or meta commentary.")
+            add("SYSTEM\nYou are roleplaying as ${character.name}. Stay consistent, remain fully in character, and never decide the user's actions. Reply directly as the character without mentioning the model, prompts, reasoning, or generation process. Think silently when reasoning is supported; never print chain-of-thought, planning, analysis, status updates, or phrases such as 'the model is thinking' or 'el modelo está considerando'. Only the final in-character roleplay belongs in the answer. Use clean roleplay formatting: actions between single asterisks and dialogue in natural paragraphs, with a blank line between action and dialogue. Never emit double-asterisk action blocks, control tokens, or meta commentary.")
+            add(
+                """CONVERSATION CONTINUITY (mandatory)
+                    Treat the supplied messages as one chronological, ongoing scene. Before replying, silently review the recent conversation and resolve pronouns, omitted subjects, possessions, places, current actions, and questions from the immediately preceding turns.
+                    The newest user message directly continues the latest exchange. Answer what it actually refers to; never reset the scene, change the subject, or claim that the context is unclear when the transcript supplies it.
+                    Established events and user corrections are authoritative. Preserve the character's earlier choices, opinions, preferences, promises, emotional stance, and relationship development unless the conversation naturally changes them.
+                    If a detail is genuinely unknown, make a modest in-character inference or ask one natural clarifying question without breaking roleplay.""".trimIndent(),
+            )
             request.responseLanguage?.takeIf(String::isNotBlank)?.let {
                 add("RESPONSE LANGUAGE\nAlways answer in $it, while preserving the character's natural voice.")
             }
@@ -109,6 +130,7 @@ class PromptBuilder(
                     You have access only to the relevant memories supplied below. Use them naturally when relevant.
                     Never mention a memory database or say "according to my memory". Do not force memories into unrelated replies.
                     Do not claim to remember anything absent from this context. Treat uncertain memories cautiously.
+                    Memories originating from the character are that character's own prior opinions, preferences, promises, or beliefs. Keep ownership clear and do not suddenly reverse them without an in-story reason.
                     You may ask a natural follow-up about an unresolved event, but only when it fits. Stay consistent with the character.""".trimIndent(),
             )
         }.joinToString("\n\n")
@@ -132,16 +154,22 @@ class PromptBuilder(
         val available = (request.contextWindow - request.responseReserve - budget.estimateTokens(essential) -
             budget.estimateTokens(currentSection) - 48).coerceAtLeast(0)
 
+        val anchorBudget = if (currentMessage != null) (available * 0.08f).toInt().coerceAtMost(180) else 0
         val recentBudget = (available * 0.52f).toInt()
         val memoryBudget = (available * 0.22f).toInt()
-        val loreBudget = (available * 0.12f).toInt()
-        val summaryBudget = (available - recentBudget - memoryBudget - loreBudget).coerceAtLeast(0)
+        val loreBudget = (available * 0.10f).toInt()
+        val summaryBudget = (available - anchorBudget - recentBudget - memoryBudget - loreBudget).coerceAtLeast(0)
 
         val history = budget.takeNewestWithinBudget(earlierMessages, recentBudget, null)
-        val transcript = history.joinToString("\n") { message ->
+        val transcript = history.mapIndexed { index, message ->
             val speaker = if (message.role == MessageRole.USER) request.userName else character.name
-            "$speaker: ${substitutions(message.content)}"
-        }
+            "Turn ${index + 1} | $speaker: ${substitutions(message.content)}"
+        }.joinToString("\n")
+        val immediateAnchor = history.lastOrNull { it.role == MessageRole.CHARACTER }
+            ?.content
+            ?.let(substitutions)
+            ?.let { budget.trimTextToBudget(it, anchorBudget) }
+            .orEmpty()
 
         val relationship = budget.trimTextToBudget(request.relationshipState, (memoryBudget * 0.2f).toInt())
         var memoryUsed = budget.estimateTokens(relationship)
@@ -179,8 +207,21 @@ class PromptBuilder(
         val systemSections = buildList {
             add(essential)
             if (relationship.isNotBlank()) add("RELATIONSHIP STATE\n$relationship")
-            if (includedMemories.isNotEmpty()) add(
-                "RELEVANT LONG-TERM MEMORIES\n" + includedMemories.joinToString("\n") {
+            val characterBeliefs = includedMemories.filter {
+                it.origin in setOf(MemoryOrigin.CHARACTER_STATED, MemoryOrigin.CHARACTER_INFERENCE) &&
+                    it.type in setOf(
+                        MemoryType.OPINION, MemoryType.PREFERENCE, MemoryType.PROMISE,
+                        MemoryType.GOAL, MemoryType.EMOTIONAL,
+                    )
+            }
+            val otherMemories = includedMemories.filterNot { it in characterBeliefs }
+            if (characterBeliefs.isNotEmpty()) add(
+                "CHARACTER'S PERSISTENT OPINIONS AND PREFERENCES\n" + characterBeliefs.joinToString("\n") {
+                    "- ${if (it.confidence < 0.65f) "Uncertain: " else ""}${it.content}"
+                },
+            )
+            if (otherMemories.isNotEmpty()) add(
+                "RELEVANT LONG-TERM MEMORIES\n" + otherMemories.joinToString("\n") {
                     "- ${if (it.confidence < 0.65f) "Uncertain: " else ""}${it.content}"
                 },
             )
@@ -188,6 +229,9 @@ class PromptBuilder(
             if (includedLore.isNotEmpty()) add("RELEVANT LORE\n" + includedLore.joinToString("\n") { it.content })
             if (summary.isNotBlank()) add("EARLIER CONVERSATION SUMMARY\n$summary")
             if (examples.isNotBlank()) add("EXAMPLE DIALOGUE\n$examples")
+            if (immediateAnchor.isNotBlank()) add(
+                "IMMEDIATE SCENE ANCHOR (the current user message replies to this)\n${character.name}: $immediateAnchor",
+            )
         }
         val sections = buildList {
             addAll(systemSections)

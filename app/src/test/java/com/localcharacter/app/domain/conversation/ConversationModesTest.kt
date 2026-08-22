@@ -59,4 +59,19 @@ class ConversationModesTest {
         val value = "El modelo está considerando cómo responder. A continuación, seguirá la escena. **Tsuyu se detiene.**"
         assertEquals("*Tsuyu se detiene.*", RoleplayTextFormatter.normalize(value))
     }
+
+    @Test fun `roleplay formatter hides step by step and unfinished thinking`() {
+        val completed = """Step-by-step reasoning process:
+            1. Inspect the context.
+            2. Plan the response.
+
+            *Tsuyu revisa el cesto de ropa.*
+
+            "Quizá dejé el pijama en la lavandería."
+        """.trimIndent()
+        val cleaned = RoleplayTextFormatter.normalize(completed)
+        assertFalse(cleaned.contains("reasoning", ignoreCase = true))
+        assertTrue(cleaned.startsWith("*Tsuyu"))
+        assertEquals("", RoleplayTextFormatter.normalize("<think>todavía razonando"))
+    }
 }

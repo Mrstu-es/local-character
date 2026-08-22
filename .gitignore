@@ -13,6 +13,8 @@
 .tmp/
 .localappdata/
 app/build/
+app/libs/*.aar
+release-assets/
 local.properties
 third_party/llama.cpp/
 *.gguf
@@ -31,3 +33,15 @@ group-chat-pinned.png
 group-memory-test.png
 group-pinned-final.png
 ui-current.xml
+# Local Character Desktop
+/desktop/node_modules/
+/desktop/frontend/dist/
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+/desktop/models/
+/desktop/native/bin/
+!/desktop/native/bin/.gitkeep
+/desktop/native/llama.cpp/
+/desktop/native/build/
+*.gguf

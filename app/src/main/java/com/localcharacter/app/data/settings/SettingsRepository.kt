@@ -50,8 +50,45 @@ data class MemorySettings(
     val automaticFollowUps: Boolean = true,
     val conversationSummaries: Boolean = true,
     val level: MemoryLevel = MemoryLevel.NORMAL,
-    val shareAcrossChats: Boolean = false,
+    // Character beliefs and relationship continuity should follow the same character
+    // and user persona into a new chat. Users can explicitly disable this in Settings.
+    val shareAcrossChats: Boolean = true,
 )
+
+/**
+ * Maps only the exact sampling tuples shipped by older builds to the stable 3B
+ * defaults. Context, output, CPU and batching choices are preserved, and any
+ * customized sampling value leaves the complete configuration untouched.
+ */
+object GenerationSettingsCompatibility {
+    fun migrateLegacyDefaults(settings: GenerationSettings): GenerationSettings = when {
+        settings.hasSampling(0.85f, 0.92f, 40, 0.05f, 1.08f) -> settings.copy(
+            temperature = 0.45f,
+            topP = 0.90f,
+            topK = 40,
+            minP = 0.05f,
+            repeatPenalty = 1.08f,
+        )
+        settings.hasSampling(0.95f, 0.93f, 50, 0.05f, 1.12f) -> settings.copy(
+            temperature = 0.60f,
+            topP = 0.90f,
+            topK = 40,
+            minP = 0.05f,
+            repeatPenalty = 1.08f,
+        )
+        else -> settings
+    }
+
+    private fun GenerationSettings.hasSampling(
+        temperature: Float,
+        topP: Float,
+        topK: Int,
+        minP: Float,
+        repeatPenalty: Float,
+    ): Boolean =
+        this.temperature == temperature && this.topP == topP && this.topK == topK &&
+            this.minP == minP && this.repeatPenalty == repeatPenalty
+}
 
 data class TtsSettings(
     val autoPlayResponses: Boolean = false,
@@ -126,7 +163,7 @@ class SettingsRepository(private val context: Context) {
     }
     val generationSettings: Flow<GenerationSettings> = context.dataStore.data.map { preferences ->
         val defaults = GenerationSettings.Balanced
-        GenerationSettings(
+        GenerationSettingsCompatibility.migrateLegacyDefaults(GenerationSettings(
             temperature = preferences[Keys.temperature] ?: defaults.temperature,
             topP = preferences[Keys.topP] ?: defaults.topP,
             topK = preferences[Keys.topK] ?: defaults.topK,
@@ -136,7 +173,7 @@ class SettingsRepository(private val context: Context) {
             maxTokens = preferences[Keys.maxTokens] ?: defaults.maxTokens,
             threads = preferences[Keys.threads] ?: defaults.threads,
             batchSize = preferences[Keys.batchSize] ?: defaults.batchSize,
-        )
+        ))
     }
     val memorySettings: Flow<MemorySettings> = context.dataStore.data.map { preferences ->
         MemorySettings(
@@ -146,7 +183,7 @@ class SettingsRepository(private val context: Context) {
             level = runCatching {
                 MemoryLevel.valueOf(preferences[Keys.memoryLevel] ?: MemoryLevel.NORMAL.name)
             }.getOrDefault(MemoryLevel.NORMAL),
-            shareAcrossChats = preferences[Keys.shareAcrossChats] ?: false,
+            shareAcrossChats = preferences[Keys.shareAcrossChats] ?: true,
         )
     }
     val enabledCatalogProviders: Flow<Set<String>> = context.dataStore.data.map { preferences ->

@@ -14,8 +14,8 @@ android {
         applicationId = "com.localcharacter.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 18
-        versionName = "0.8.0"
+        versionCode = 19
+        versionName = "0.9.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -68,6 +68,33 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+
+    val releaseKeystorePath = providers.environmentVariable("LOCAL_CHARACTER_ANDROID_KEYSTORE").orNull
+    val releaseStorePassword = providers.environmentVariable("LOCAL_CHARACTER_ANDROID_STORE_PASSWORD").orNull
+    val releaseKeyAlias = providers.environmentVariable("LOCAL_CHARACTER_ANDROID_KEY_ALIAS").orNull
+    val releaseKeyPassword = providers.environmentVariable("LOCAL_CHARACTER_ANDROID_KEY_PASSWORD").orNull
+    val releaseSigningValues = listOf(
+        releaseKeystorePath,
+        releaseStorePassword,
+        releaseKeyAlias,
+        releaseKeyPassword,
+    )
+    check(releaseSigningValues.all { it == null } || releaseSigningValues.all { !it.isNullOrBlank() }) {
+        "La firma release de Android está incompleta: define las cuatro variables LOCAL_CHARACTER_ANDROID_*"
+    }
+    val stableReleaseSigning = if (releaseSigningValues.all { !it.isNullOrBlank() }) {
+        signingConfigs.create("stableRelease") {
+            storeFile = file(requireNotNull(releaseKeystorePath))
+            storePassword = requireNotNull(releaseStorePassword)
+            keyAlias = requireNotNull(releaseKeyAlias)
+            keyPassword = requireNotNull(releaseKeyPassword)
+        }
+    } else {
+        null
+    }
+    buildTypes.named("release") {
+        stableReleaseSigning?.let { signingConfig = it }
     }
 }
 

@@ -135,6 +135,22 @@ export interface ConversationSummaryRecord {
   updatedAt: string;
 }
 
+export type SemanticMemoryKind = "fact" | "preference" | "opinion" | "relationship" | "event";
+
+export interface SemanticMemoryRecord {
+  id: string;
+  characterId: string;
+  conversationId: string;
+  kind: SemanticMemoryKind;
+  subject: string;
+  memoryKey: string;
+  content: string;
+  confidence: number;
+  sourceMessageId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SuspiciousMessageRecord extends ChatMessageRecord {
   reason: string;
 }

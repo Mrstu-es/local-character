@@ -1,0 +1,215 @@
+name: Compilar y publicar Android + Windows
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar SDK, NDK y CMake fijados
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;26.1.10909125" \
+            "cmake;3.22.1"
+
+      - name: Restaurar dependencias nativas reproducibles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/libs third_party
+          curl --fail --location --retry 3 \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.5/sherpa-onnx-1.13.5.aar" \
+            --output app/libs/sherpa-onnx-1.13.5.aar
+          curl --fail --location --retry 3 \
+            "https://github.com/ggml-org/llama.cpp/archive/refs/tags/b10434.zip" \
+            --output third_party/llama-b10434.zip
+          unzip -q third_party/llama-b10434.zip -d third_party
+          mv third_party/llama.cpp-b10434 third_party/llama.cpp
+          rm third_party/llama-b10434.zip
+
+      - name: Probar y compilar el APK de publicación firmado
+        shell: bash
+        env:
+          LOCAL_CHARACTER_ANDROID_KEYSTORE_BASE64: ${{ secrets.LOCAL_CHARACTER_ANDROID_KEYSTORE_BASE64 }}
+          LOCAL_CHARACTER_ANDROID_STORE_PASSWORD: ${{ secrets.LOCAL_CHARACTER_ANDROID_STORE_PASSWORD }}
+          LOCAL_CHARACTER_ANDROID_KEY_ALIAS: ${{ secrets.LOCAL_CHARACTER_ANDROID_KEY_ALIAS }}
+          LOCAL_CHARACTER_ANDROID_KEY_PASSWORD: ${{ secrets.LOCAL_CHARACTER_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for variable in \
+            LOCAL_CHARACTER_ANDROID_KEYSTORE_BASE64 \
+            LOCAL_CHARACTER_ANDROID_STORE_PASSWORD \
+            LOCAL_CHARACTER_ANDROID_KEY_ALIAS \
+            LOCAL_CHARACTER_ANDROID_KEY_PASSWORD; do
+            if [ -z "${!variable:-}" ]; then
+              echo "Falta el secreto requerido: $variable" >&2
+              exit 1
+            fi
+          done
+          export LOCAL_CHARACTER_ANDROID_KEYSTORE="$RUNNER_TEMP/local-character-release.p12"
+          printf '%s' "$LOCAL_CHARACTER_ANDROID_KEYSTORE_BASE64" | base64 --decode \
+            > "$LOCAL_CHARACTER_ANDROID_KEYSTORE"
+          chmod +x gradlew
+          ./gradlew --no-daemon testDebugUnitTest assembleRelease
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose --print-certs \
+            app/build/outputs/apk/release/app-release.apk
+
+      - name: Preparar APK con nombre estable
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          cp app/build/outputs/apk/release/app-release.apk \
+            release-assets/Local-Character-Android.apk
+
+      - name: Guardar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: release-assets/Local-Character-Android.apk
+          if-no-files-found: error
+
+  windows:
+    name: Windows EXE + MSI
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Configurar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restaurar llama.cpp Vulkan con fallback CPU
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = Join-Path $env:RUNNER_TEMP "llama-vulkan.zip"
+          $expanded = Join-Path $env:RUNNER_TEMP "llama-vulkan"
+          $destination = Join-Path $PWD "desktop/native/bin"
+          Invoke-WebRequest `
+            -Headers @{ "User-Agent" = "LocalCharacterRelease" } `
+            -Uri "https://github.com/ggml-org/llama.cpp/releases/download/b10434/llama-b10434-bin-win-vulkan-x64.zip" `
+            -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $expanded
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          Get-ChildItem -LiteralPath $expanded -Recurse -File | ForEach-Object {
+            Copy-Item -Force -LiteralPath $_.FullName -Destination (Join-Path $destination $_.Name)
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $destination "llama-server.exe"))) {
+            throw "El paquete fijado no contiene llama-server.exe"
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $destination "llama-cli.exe"))) {
+            throw "El paquete fijado no contiene llama-cli.exe"
+          }
+
+      - name: Instalar dependencias y probar continuidad
+        shell: pwsh
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run test:continuity
+          npm run test:memory
+          npm run build
+
+      - name: Compilar instaladores Windows
+        shell: pwsh
+        working-directory: desktop
+        run: npm run tauri:build
+
+      - name: Preparar instaladores con nombres estables
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $exe = Get-ChildItem -LiteralPath "desktop/src-tauri/target/release/bundle/nsis" -Filter "*.exe" | Select-Object -First 1
+          $msi = Get-ChildItem -LiteralPath "desktop/src-tauri/target/release/bundle/msi" -Filter "*.msi" | Select-Object -First 1
+          if (-not $exe -or -not $msi) { throw "Tauri no produjo ambos instaladores" }
+          Copy-Item -Force -LiteralPath $exe.FullName -Destination "release-assets/Local-Character-Windows-Setup.exe"
+          Copy-Item -Force -LiteralPath $msi.FullName -Destination "release-assets/Local-Character-Windows.msi"
+
+      - name: Guardar instaladores Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            release-assets/Local-Character-Windows-Setup.exe
+            release-assets/Local-Character-Windows.msi
+          if-no-files-found: error
+
+  release:
+    name: Publicar Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reunir instaladores
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generar verificaciones SHA-256
+        shell: bash
+        run: |
+          cd release-assets
+          sha256sum \
+            Local-Character-Android.apk \
+            Local-Character-Windows-Setup.exe \
+            Local-Character-Windows.msi \
+            > SHA256SUMS.txt
+
+      - name: Crear la Release y adjuntar todas las descargas
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## Descargas directas
+
+            - **Android:** `Local-Character-Android.apk`
+            - **Windows recomendado:** `Local-Character-Windows-Setup.exe`
+            - **Windows MSI:** `Local-Character-Windows.msi`
+
+            Los tres instaladores se compilan desde la misma etiqueta y se publican juntos. `SHA256SUMS.txt` permite verificar su integridad.
+          files: |
+            release-assets/Local-Character-Android.apk
+            release-assets/Local-Character-Windows-Setup.exe
+            release-assets/Local-Character-Windows.msi
+            release-assets/SHA256SUMS.txt

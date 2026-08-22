@@ -1,6 +1,6 @@
 [package]
 name = "local-character-desktop"
-version = "0.1.0"
+version = "0.3.0"
 description = "Local Character Desktop: chat local con modelos GGUF para Windows"
 authors = ["Local Character"]
 edition = "2021"

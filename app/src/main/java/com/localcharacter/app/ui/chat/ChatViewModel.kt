@@ -281,7 +281,11 @@ class ChatViewModel(
             contextSize = ModelLoadPolicy.effectiveContextSize(configured.contextSize, activeLocalModel?.contextSize),
         )
         val responseLanguage = container.settings.catalogLanguage.first().promptName
-        val history = container.chats.recent(conversationId, 40)
+        // Load enough chronological history for the active context. PromptBuilder still
+        // applies the exact token budget, so larger-context GGUFs can actually use their
+        // window while small models remain protected from an oversized prompt.
+        val historyFetchLimit = (contextWindow / 32).coerceIn(80, 240)
+        val history = container.chats.recent(conversationId, historyFetchLimit)
         val persona = conversation.userPersonaId?.let { container.userPersonas.get(it) }
             ?: container.userPersonas.ensureDefault()
         val characterPreferences = container.characterPreferences.get(character.id)
@@ -303,6 +307,21 @@ class ChatViewModel(
             ?: history.takeLast(6).joinToString(" ") { it.content }
         val retrievalHistory = if (userMessage != null) history.dropLast(1) else history
         val scoredMemories = memoryRetriever.retrieve(retrievalQuery, retrievalHistory, candidates, memoryLimit)
+        val characterContinuityMemories = candidates.asSequence()
+            .filter {
+                it.origin == MemoryOrigin.CHARACTER_STATED && it.type in setOf(
+                    MemoryType.OPINION,
+                    MemoryType.PREFERENCE,
+                    MemoryType.PROMISE,
+                    MemoryType.GOAL,
+                    MemoryType.EMOTIONAL,
+                )
+            }
+            .sortedWith(compareByDescending<Memory> { it.isPinned }.thenByDescending { it.importance }.thenByDescending { it.updatedAt })
+            .take(if (memorySettings.level == MemoryLevel.DETAILED) 6 else 4)
+            .toList()
+        val promptMemories = (scoredMemories.map { it.memory } + characterContinuityMemories)
+            .distinctBy { it.id }
         val relationshipState = if (memorySettings.intelligentMemory) {
             container.relationships.get(character.id, conversationId, conversation.userPersonaId)?.relationshipSummary.orEmpty()
         } else ""
@@ -321,7 +340,7 @@ class ChatViewModel(
                 userPersona = persona.description,
                 messages = history,
                 loreEntries = lore,
-                memories = scoredMemories.map { it.memory },
+                memories = promptMemories,
                 conversationSummary = summary.ifBlank { conversation.summary },
                 relationshipState = relationshipState,
                 pendingFollowUps = followUps.map { it.description },
@@ -426,6 +445,15 @@ class ChatViewModel(
                 mutableStreamingMessage.value = completedResponse
                 container.chats.saveMessage(completedResponse)
                 refreshMessageCount()
+                // Explicit opinions/preferences are cheap to detect and must be available
+                // before the next user turn; do not wait for the slower background LLM job.
+                runCatching {
+                    container.memoryOrchestrator.rememberCharacterOpinions(
+                        completedResponse, character, conversation, memorySettings,
+                    )
+                }.onFailure {
+                    if (AppBuildInfo.DEBUG) Log.d("LocalMemory", "Immediate opinion memory skipped: ${it.message}")
+                }
                 val autoplay = when (characterPreferences.autoplayOverride) {
                     VoiceAutoplayOverride.USE_GLOBAL -> container.settings.ttsSettings.first().autoPlayResponses
                     VoiceAutoplayOverride.ALWAYS -> true

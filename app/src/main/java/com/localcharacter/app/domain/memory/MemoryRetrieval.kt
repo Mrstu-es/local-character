@@ -23,10 +23,14 @@ class KeywordMemorySearchEngine : MemorySearchEngine {
         val ageDays = ((now - memory.updatedAt).coerceAtLeast(0L) / 86_400_000.0)
         val recency = exp(-ageDays / 45.0).toFloat()
         val access = (ln((memory.accessCount + 1).toDouble()) / 10.0).toFloat().coerceAtMost(0.12f)
-        val relationshipBoost = if (memory.type == MemoryType.RELATIONSHIP && direct > 0f) 0.12f else 0f
+        val continuityBoost = when (memory.type) {
+            MemoryType.RELATIONSHIP -> if (direct > 0f) 0.12f else 0f
+            MemoryType.OPINION, MemoryType.PREFERENCE -> if (direct > 0f || contextual > 0f) 0.16f else 0.04f
+            else -> 0f
+        }
         return (
             direct * 0.48f + contextual * 0.12f + memory.importance * 0.2f + recency * 0.08f +
-                properNameBoost + relationshipBoost + access + if (memory.isPinned) 0.18f else 0f
+                properNameBoost + continuityBoost + access + if (memory.isPinned) 0.18f else 0f
             ).coerceIn(0f, 1.5f)
     }
 

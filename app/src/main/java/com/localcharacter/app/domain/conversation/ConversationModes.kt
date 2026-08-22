@@ -32,16 +32,21 @@ object ActionModeFormatter {
 /** Cleans model output so every character uses the same readable roleplay layout. */
 object RoleplayTextFormatter {
     private val thinkingBlock = Regex("<(?:think|thinking|analysis)\\b[^>]*>[\\s\\S]*?</(?:think|thinking|analysis)>", RegexOption.IGNORE_CASE)
+    private val unfinishedThinkingBlock = Regex("<(?:think|thinking|analysis)\\b[^>]*>[\\s\\S]*$", RegexOption.IGNORE_CASE)
     private val controlToken = Regex("<\\|(?:thinking|thought|analysis|im_start|im_end|assistant|user|system|eot_id|end_of_turn|end_of_text)\\|>", RegexOption.IGNORE_CASE)
     private val metaLine = Regex("(?im)^\\s*(?:el modelo (?:está|esta) (?:pensando|razonando|generando)[^\\n]*|the model is (?:thinking|reasoning|generating)[^\\n]*|system (?:is )?thinking[^\\n]*|por favor,? (?:ten|tenga) paciencia[^\\n]*)\\s*$")
 
-    private val metaPrefix = Regex("(?is)^\\s*(?:el\\s+(?:modelo|sistema|asistente)|the\\s+(?:model|system|assistant)|system)\\b[\\s\\S]*?(?=\\*{1,3}(?=\\S)|[\\\"\\u201c\\u00ab])")
+    private val metaPrefix = Regex("(?is)^\\s*(?:(?:el|la)\\s+(?:modelo|sistema|asistente|ia)|the\\s+(?:model|system|assistant|ai)|system)\\b[\\s\\S]*?(?=\\*{1,3}(?=\\S)|[\\\"\\u201c\\u00ab])")
+    private val reasoningPrefix = Regex(
+        "(?is)^\\s*(?:step[- ]by[- ]step (?:reasoning|analysis)(?: process)?|reasoning process|analysis process|chain of thought|proceso de razonamiento|razonamiento paso a paso|análisis paso a paso)\\s*:?\\s*[\\s\\S]*?(?=\\*{1,3}(?=\\S)|[\\\"\\u201c\\u00ab])",
+    )
 
     fun normalize(value: String): String {
         var text = value.replace("\r\n", "\n").replace('\r', '\n')
-        text = text.replace(thinkingBlock, "").replace(controlToken, "")
+        text = text.replace(thinkingBlock, "").replace(unfinishedThinkingBlock, "").replace(controlToken, "")
+        text = text.replace(reasoningPrefix, "")
         text = text.replace(metaPrefix, "")
-        text = text.replace(Regex("(?im)^\\s*(?:el\\s+(?:modelo|sistema|asistente)|the\\s+(?:model|system|assistant)|system)\\b[^\\n]*$"), "")
+        text = text.replace(Regex("(?im)^\\s*(?:(?:el|la)\\s+(?:modelo|sistema|asistente|ia)|the\\s+(?:model|system|assistant|ai)|system)\\b[^\\n]*$"), "")
         text = text.replace(metaLine, "")
         text = text.replace(Regex("(?im)^\\s*(?:system|assistant|user|developer|thinking|reasoning|analysis|prompt|generation)\\s*:\\s*"), "")
         text = text.replace(Regex("\\*{2,}"), "*")

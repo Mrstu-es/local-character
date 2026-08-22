@@ -1032,6 +1032,11 @@ struct ChatCompletionRequest {
     model: String,
     messages: Vec<ChatMessage>,
     max_tokens: u32,
+    temperature: f32,
+    top_p: f32,
+    top_k: u32,
+    min_p: f32,
+    repeat_penalty: f32,
     stream: bool,
     stream_options: StreamOptions,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1097,9 +1102,19 @@ pub fn generate_stream(
             .unwrap_or_default()
             .to_ascii_lowercase();
         let model_hint = model.name.to_ascii_lowercase();
+        let architecture_hint = model
+            .architecture
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
         let thinking_capable = template_hint.contains("enable_thinking")
+            || template_hint.contains("thinking")
             || model_hint.contains("qwen3")
-            || model_hint.contains("thinking");
+            || model_hint.contains("deepseek")
+            || model_hint.contains("thinking")
+            || architecture_hint.contains("qwen")
+            || architecture_hint.contains("deepseek")
+            || architecture_hint.contains("reasoning");
         (port, model.name, chat_messages, thinking_capable)
     };
 
@@ -1107,6 +1122,15 @@ pub fn generate_stream(
         model: model_name,
         messages: chat_messages,
         max_tokens: max_output,
+        // Small and medium GGUF roleplay models become noticeably less
+        // coherent with llama.cpp's more creative defaults. These conservative
+        // values keep the current scene and the latest question dominant while
+        // retaining enough variation for natural dialogue.
+        temperature: 0.35,
+        top_p: 0.9,
+        top_k: 40,
+        min_p: 0.05,
+        repeat_penalty: 1.08,
         stream: true,
         stream_options: StreamOptions {
             include_usage: true,

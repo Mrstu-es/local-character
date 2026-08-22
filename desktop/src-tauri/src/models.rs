@@ -85,6 +85,35 @@ pub struct ChatMessageRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ConversationSummaryRecord {
+    pub conversation_id: String,
+    pub summary: String,
+    pub summary_until_message_id: Option<String>,
+    pub message_count: i64,
+    pub token_count: i64,
+    pub updated_at: String,
+}
+
+/// Explicit long-term roleplay memory extracted locally from the visible
+/// conversation. It never stores hidden reasoning or model diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticMemoryRecord {
+    pub id: String,
+    pub character_id: String,
+    pub conversation_id: String,
+    pub kind: String,
+    pub subject: String,
+    pub memory_key: String,
+    pub content: String,
+    pub confidence: f64,
+    pub source_message_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SuspiciousMessageRecord {
     #[serde(flatten)]
     pub message: ChatMessageRecord,

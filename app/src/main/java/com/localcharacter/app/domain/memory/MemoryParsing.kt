@@ -155,3 +155,46 @@ class MemoryForgetIntentDetector {
         pattern.find(message)?.groupValues?.getOrNull(1)?.trim()?.trimEnd('.', '!', '?')
     }
 }
+
+/**
+ * Captures explicit opinions and stable preferences without requiring a second LLM pass.
+ * This gives the character continuity even when a small local model cannot return valid
+ * memory-extraction JSON or the user sends the next message immediately.
+ */
+class CharacterOpinionDetector {
+    private val action = Regex("\\*[^*]{0,600}\\*")
+    private val preferenceSignal = Regex(
+        "(?i)\\b(?:me (?:gusta|encanta|molesta)|no me gusta|prefiero|adoro|amo|odio|i (?:like|love|hate|prefer)|my favorite)\\b",
+    )
+    private val opinionSignal = Regex(
+        "(?i)\\b(?:creo que|pienso que|opino que|considero que|para m[ií]|desde mi punto de vista|i think|i believe|in my opinion|from my point of view)\\b",
+    )
+
+    fun detect(message: String, characterName: String): List<MemoryCandidate> {
+        val visible = action.replace(message, " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (visible.isBlank()) return emptyList()
+        return visible.split(Regex("(?<=[.!?])\\s+|[\\r\\n]+"))
+            .asSequence()
+            .map { it.trim().trim('"', '\u201c', '\u201d', '\u00ab', '\u00bb') }
+            .filter { it.length in 8..280 }
+            .mapNotNull { statement ->
+                val type = when {
+                    preferenceSignal.containsMatchIn(statement) -> MemoryType.PREFERENCE
+                    opinionSignal.containsMatchIn(statement) -> MemoryType.OPINION
+                    else -> null
+                } ?: return@mapNotNull null
+                MemoryCandidate(
+                    type = type,
+                    content = "$characterName expressed this ${if (type == MemoryType.OPINION) "opinion" else "preference"}: \"$statement\"",
+                    importance = 0.78f,
+                    confidence = 0.96f,
+                    origin = MemoryOrigin.CHARACTER_STATED,
+                )
+            }
+            .distinctBy { it.type to MemoryTextNormalizer.normalize(it.content) }
+            .take(3)
+            .toList()
+    }
+}

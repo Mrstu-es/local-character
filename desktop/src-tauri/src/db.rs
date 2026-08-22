@@ -1,7 +1,8 @@
 use crate::models::{
     CharacterRecord, ChatMessageRecord, ConversationRecord, ConversationSummaryRecord,
     ExploreFilterCatalog, ExploreFilterOption, GroupRecord, ModelRecord, ProviderRecord,
-    RemoteCharacterRecord, RepositorySourceRecord, VoiceModelRecord, VoiceRepositoryRecord,
+    RemoteCharacterRecord, RepositorySourceRecord, SemanticMemoryRecord, VoiceModelRecord,
+    VoiceRepositoryRecord,
 };
 use directories::ProjectDirs;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -755,6 +756,98 @@ impl Database {
                 [conversation_id],
             )
             .map_err(|error| format!("No se pudo invalidar el resumen del chat: {error}"))?;
+        Ok(())
+    }
+
+    pub fn list_semantic_memories(
+        &mut self,
+        character_id: &str,
+        conversation_id: &str,
+    ) -> Result<Vec<SemanticMemoryRecord>, String> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, character_id, conversation_id, kind, subject, memory_key,
+                        content, confidence, source_message_id, created_at, updated_at
+                 FROM semantic_memories
+                 WHERE character_id = ?1
+                 ORDER BY CASE WHEN conversation_id = ?2 THEN 0 ELSE 1 END,
+                          confidence DESC, updated_at DESC
+                 LIMIT 120",
+            )
+            .map_err(|error| format!("No se pudo consultar la memoria semantica: {error}"))?;
+        let rows = statement
+            .query_map(params![character_id, conversation_id], |row| {
+                Ok(SemanticMemoryRecord {
+                    id: row.get(0)?,
+                    character_id: row.get(1)?,
+                    conversation_id: row.get(2)?,
+                    kind: row.get(3)?,
+                    subject: row.get(4)?,
+                    memory_key: row.get(5)?,
+                    content: row.get(6)?,
+                    confidence: row.get(7)?,
+                    source_message_id: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                })
+            })
+            .map_err(|error| format!("No se pudo leer la memoria semantica: {error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("No se pudo materializar la memoria semantica: {error}"))
+    }
+
+    pub fn upsert_semantic_memory(&mut self, memory: &SemanticMemoryRecord) -> Result<(), String> {
+        self.connection
+            .execute(
+                "INSERT INTO semantic_memories
+                 (id, character_id, conversation_id, kind, subject, memory_key, content,
+                  confidence, source_message_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+                         COALESCE(NULLIF(?10, ''), CURRENT_TIMESTAMP),
+                         COALESCE(NULLIF(?11, ''), CURRENT_TIMESTAMP))
+                 ON CONFLICT(character_id, conversation_id, memory_key) DO UPDATE SET
+                  kind=excluded.kind,
+                  subject=excluded.subject,
+                  content=excluded.content,
+                  confidence=MAX(semantic_memories.confidence, excluded.confidence),
+                  source_message_id=excluded.source_message_id,
+                  updated_at=CURRENT_TIMESTAMP",
+                params![
+                    memory.id,
+                    memory.character_id,
+                    memory.conversation_id,
+                    memory.kind,
+                    memory.subject,
+                    memory.memory_key,
+                    memory.content,
+                    memory.confidence.clamp(0.0, 1.0),
+                    memory.source_message_id,
+                    memory.created_at,
+                    memory.updated_at,
+                ],
+            )
+            .map_err(|error| format!("No se pudo guardar la memoria semantica: {error}"))?;
+
+        self.connection
+            .execute(
+                "DELETE FROM semantic_memories
+                 WHERE character_id = ?1 AND conversation_id = ?2 AND id NOT IN (
+                    SELECT id FROM semantic_memories
+                    WHERE character_id = ?1 AND conversation_id = ?2
+                    ORDER BY confidence DESC, updated_at DESC
+                    LIMIT 120
+                 )",
+                params![memory.character_id, memory.conversation_id],
+            )
+            .map_err(|error| format!("No se pudo compactar la memoria semantica: {error}"))?;
+        Ok(())
+    }
+
+    pub fn delete_semantic_memory(&mut self, id: &str) -> Result<(), String> {
+        self.connection
+            .execute("DELETE FROM semantic_memories WHERE id = ?1", [id])
+            .map_err(|error| format!("No se pudo eliminar la memoria semantica: {error}"))?;
         Ok(())
     }
 
@@ -1823,6 +1916,45 @@ fn apply_migrations(connection: &mut Connection) -> Result<(), String> {
         connection
             .execute("INSERT INTO schema_migrations(version) VALUES (7)", [])
             .map_err(|e| format!("No se pudo registrar la migraciÃ³n 7: {e}"))?;
+    }
+    let current: i64 = connection
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("No se pudo leer schema_migrations: {e}"))?;
+    if current < 8 {
+        connection
+            .execute_batch(
+                "BEGIN;
+                 CREATE TABLE IF NOT EXISTS semantic_memories (
+                     id TEXT PRIMARY KEY,
+                     character_id TEXT NOT NULL,
+                     conversation_id TEXT NOT NULL,
+                     kind TEXT NOT NULL,
+                     subject TEXT NOT NULL,
+                     memory_key TEXT NOT NULL,
+                     content TEXT NOT NULL,
+                     confidence REAL NOT NULL DEFAULT 0.8,
+                     source_message_id TEXT,
+                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                     FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE,
+                     FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                     FOREIGN KEY(source_message_id) REFERENCES messages(id) ON DELETE SET NULL,
+                     UNIQUE(character_id, conversation_id, memory_key)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_semantic_memories_context
+                 ON semantic_memories(character_id, conversation_id, confidence DESC, updated_at DESC);
+                 CREATE INDEX IF NOT EXISTS idx_semantic_memories_kind
+                 ON semantic_memories(character_id, conversation_id, kind);
+                 COMMIT;",
+            )
+            .map_err(|e| format!("No se pudo aplicar la migracion 8: {e}"))?;
+        connection
+            .execute("INSERT INTO schema_migrations(version) VALUES (8)", [])
+            .map_err(|e| format!("No se pudo registrar la migracion 8: {e}"))?;
     }
     Ok(())
 }

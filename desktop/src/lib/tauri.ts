@@ -189,6 +189,18 @@ export async function saveConversationSummary(summary: ConversationSummaryRecord
   return invoke<ConversationSummaryRecord>("save_conversation_summary", { summary });
 }
 
+export async function listSemanticMemories(characterId: string, conversationId: string): Promise<import("../types").SemanticMemoryRecord[]> {
+  return invoke<import("../types").SemanticMemoryRecord[]>("list_semantic_memories", { characterId, conversationId });
+}
+
+export async function saveSemanticMemory(memory: import("../types").SemanticMemoryRecord): Promise<import("../types").SemanticMemoryRecord> {
+  return invoke<import("../types").SemanticMemoryRecord>("save_semantic_memory", { memory });
+}
+
+export async function deleteSemanticMemory(id: string): Promise<void> {
+  await invoke("delete_semantic_memory", { id });
+}
+
 export async function saveMessage(message: ChatMessageRecord): Promise<ChatMessageRecord> {
   return invoke<ChatMessageRecord>("save_message", { message });
 }

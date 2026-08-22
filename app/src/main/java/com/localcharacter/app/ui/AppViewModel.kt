@@ -47,6 +47,7 @@ import com.localcharacter.app.tts.TtsSynthesisSettings
 import com.localcharacter.app.llm.LlmState
 import com.localcharacter.app.llm.LlmTaskPriority
 import com.localcharacter.app.llm.provider.LlmModelInfo
+import com.localcharacter.app.llm.provider.PricingType
 import com.localcharacter.app.llm.provider.ProviderConnectionResult
 import com.localcharacter.app.llm.provider.ProviderModelSelection
 import com.localcharacter.app.llm.provider.ProviderSummary
@@ -347,7 +348,40 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveAiCredential(providerId: String, apiKey: String) = viewModelScope.launch {
         runCatching { withContext(Dispatchers.IO) { container.aiProviders.saveCredential(providerId, apiKey) } }
             .onSuccess {
-                mutableEvents.emit("API Key guardada de forma cifrada.")
+                // Saving an OpenRouter key is an explicit opt-in to use the
+                // remote provider. Discover its catalog immediately and pick
+                // a free model when the user still has the local default.
+                // The key remains device-local; no shared credential is baked
+                // into the APK.
+                if (providerId == "openrouter") {
+                    val discovered = runCatching {
+                        withContext(Dispatchers.IO) {
+                            container.aiProviders.models(providerId, forceRefresh = true)
+                        }
+                    }.getOrDefault(emptyList())
+                    val currentSelection = aiProviderSettings.value.globalSelection
+                    val preferred = discovered
+                        .sortedWith(compareBy<LlmModelInfo> {
+                            when (it.pricingType) {
+                                PricingType.FREE -> 0
+                                PricingType.FREE_TIER -> 1
+                                PricingType.UNKNOWN -> 2
+                                PricingType.PAID -> 3
+                                PricingType.LOCAL -> 4
+                            }
+                        }.thenBy { it.displayName.lowercase() })
+                        .firstOrNull()
+                    if (preferred != null && currentSelection.providerId == "local") {
+                        container.aiProviders.setGlobalSelection(
+                            ProviderModelSelection(preferred.providerId, preferred.modelId),
+                        )
+                        mutableEvents.emit("OpenRouter configurado. Modelo predeterminado: ${preferred.displayName}")
+                    } else {
+                        mutableEvents.emit("API Key de OpenRouter guardada de forma cifrada.")
+                    }
+                } else {
+                    mutableEvents.emit("API Key guardada de forma cifrada.")
+                }
                 refreshAiProviderSummaries()
             }
             .onFailure { mutableEvents.emit(it.message ?: "No se pudo guardar la API Key.") }
