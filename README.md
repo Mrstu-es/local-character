@@ -13,6 +13,10 @@ Local Character es una aplicación Android gratuita para conversar con personaje
 
 Cada etiqueta `v*` compila Android y Windows en GitHub Actions y publica juntos el APK, el EXE, el MSI y sus sumas SHA-256. Así, estos enlaces siempre apuntan a la versión más reciente.
 
+## Modelos entrenados recomendados
+
+Hay dos modelos Local Character RP listos para importar en la aplicación. El **Qwen3 0.6B Q8_0** es la descarga ligera recomendada para Android y equipos con poca RAM; el **Llama 3B Q4_K_M** está pensado para Desktop o dispositivos con más memoria. Descárgalos desde la [release de modelos `models-v0.1`](https://github.com/Mrstu-es/local-character/releases/tag/models-v0.1) y añádelos en **Modelos → Añadir modelo GGUF**. La tabla, los enlaces directos y los hashes SHA-256 están en [docs/RECOMMENDED_MODELS.md](docs/RECOMMENDED_MODELS.md).
+
 ## Local Character Desktop (Windows)
 
 La edición Desktop lleva la experiencia de roleplay a Windows 10/11 x64. Incluye chat dedicado, biblioteca y repositorios de personajes, grupos, memoria, voces TTS, APIs externas, modelos GGUF y un motor llama.cpp real con streaming cancelable. Detecta CPU, RAM, NVIDIA/Intel y Vulkan; permite elegir GPU, CPU o modo híbrido y prioriza la GPU discreta para cargar más capas del modelo. El contexto combina la ficha completa, la escena, el historial reciente, un resumen acumulativo y recuerdos persistentes para mantener continuidad sin perder los últimos turnos.
