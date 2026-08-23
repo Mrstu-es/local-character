@@ -53,6 +53,7 @@ El repositorio contiene un MVP Android con:
 - memoria autónoma local con extracción por el GGUF, deduplicación, conflictos, retrieval, eventos pendientes, relación y resumen incremental;
 - pantalla CRUD de memoria y ajustes de nivel, seguimientos, resúmenes y alcance entre chats;
 - Android NDK/JNI y `llama.cpp` CPU integrado directamente, sin servidor externo;
+- carga móvil más robusta para GGUF pesados: intenta mmap, carga alternativa y reducción automática de contexto/batch antes de mostrar un error claro;
 - arquitectura `LlmProvider` intercambiable con Local GGUF, Groq, OpenRouter, Gemini, OpenAI Responses, Anthropic, Mistral y OpenAI-compatible personalizado;
 - API Keys BYOK cifradas mediante Android Keystore, selector global/por personaje/por conversación, streaming común, fallback conservador y tracking local de usage/costo;
 - tests unitarios para prompt, presupuesto, lore, memoria y Character Card, más una prueba Room instrumentada.

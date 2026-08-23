@@ -333,8 +333,9 @@ class GroupChatViewModel(
                 buffer.append(delta)
                 mutableStreaming.value = response.copy(content = RoleplayTextFormatter.normalize(buffer.toString()))
             }
-            if (buffer.isNotBlank()) {
-                val done = response.copy(content = RoleplayTextFormatter.normalize(buffer.toString()), isComplete = true)
+            val finalContent = RoleplayTextFormatter.normalize(buffer.toString())
+            if (finalContent.isNotBlank()) {
+                val done = response.copy(content = finalContent, isComplete = true)
                 mutableStreaming.value = done
                 container.groups.saveMessage(done)
                 runCatching {

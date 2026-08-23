@@ -35,10 +35,16 @@ object RoleplayTextFormatter {
     private val unfinishedThinkingBlock = Regex("<(?:think|thinking|analysis)\\b[^>]*>[\\s\\S]*$", RegexOption.IGNORE_CASE)
     private val controlToken = Regex("<\\|(?:thinking|thought|analysis|im_start|im_end|assistant|user|system|eot_id|end_of_turn|end_of_text)\\|>", RegexOption.IGNORE_CASE)
     private val metaLine = Regex("(?im)^\\s*(?:el modelo (?:está|esta) (?:pensando|razonando|generando)[^\\n]*|the model is (?:thinking|reasoning|generating)[^\\n]*|system (?:is )?thinking[^\\n]*|por favor,? (?:ten|tenga) paciencia[^\\n]*)\\s*$")
-
     private val metaPrefix = Regex("(?is)^\\s*(?:(?:el|la)\\s+(?:modelo|sistema|asistente|ia)|the\\s+(?:model|system|assistant|ai)|system)\\b[\\s\\S]*?(?=\\*{1,3}(?=\\S)|[\\\"\\u201c\\u00ab])")
     private val reasoningPrefix = Regex(
         "(?is)^\\s*(?:step[- ]by[- ]step (?:reasoning|analysis)(?: process)?|reasoning process|analysis process|chain of thought|proceso de razonamiento|razonamiento paso a paso|análisis paso a paso)\\s*:?\\s*[\\s\\S]*?(?=\\*{1,3}(?=\\S)|[\\\"\\u201c\\u00ab])",
+    )
+    private val processingOnlyLine = Regex(
+        "(?im)^\\s*\\*{0,2}\\s*(?:" +
+            "(?:hace|toma|mantiene|guarda|deja escapar|suelta|respira|observa|retoma|procesa|considera)[^\\n*]{0,120}\\b(?:pausa|pensativ[oa]|atención|hilo|escena|responder|continuar|calma|respiración)[^\\n*]{0,120}" +
+            "|(?:mantiene la atención en la escena y retoma el hilo con cuidado)" +
+            "|(?:observa la escena con atención,? sin dar nada por hecho)" +
+        ")\\s*\\*{0,2}\\s*$",
     )
 
     fun normalize(value: String): String {
@@ -48,6 +54,7 @@ object RoleplayTextFormatter {
         text = text.replace(metaPrefix, "")
         text = text.replace(Regex("(?im)^\\s*(?:(?:el|la)\\s+(?:modelo|sistema|asistente|ia)|the\\s+(?:model|system|assistant|ai)|system)\\b[^\\n]*$"), "")
         text = text.replace(metaLine, "")
+        text = text.replace(processingOnlyLine, "")
         text = text.replace(Regex("(?im)^\\s*(?:system|assistant|user|developer|thinking|reasoning|analysis|prompt|generation)\\s*:\\s*"), "")
         text = text.replace(Regex("\\*{2,}"), "*")
         text = text.replace(Regex("(\\*[^*\\n]+\\*)[ \\t]+(?=[\\\"\\u201c])"), "$1\n\n")

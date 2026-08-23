@@ -5,8 +5,10 @@
 #include <cctype>
 #include <chrono>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "llama.h"
@@ -25,6 +27,7 @@ std::atomic_bool g_cancelled{false};
 std::atomic<int64_t> g_decode_deadline_ms{0};
 int32_t g_threads = 4;
 int32_t g_batch_size = 256;
+int32_t g_context_size = 2048;
 bool g_backend_initialized = false;
 std::string g_last_native_error;
 std::string g_chat_template_mode = "AUTO";
@@ -171,6 +174,40 @@ std::string jstring_to_utf8(JNIEnv *env, jstring value) {
     return result;
 }
 
+void push_unique_attempt(std::vector<std::pair<int, int>> &attempts, int context, int batch) {
+    context = std::clamp(context, 512, 4096);
+    batch = std::clamp(batch, 32, 512);
+    batch = std::min(batch, context);
+    for (const auto &attempt : attempts) {
+        if (attempt.first == context && attempt.second == batch) return;
+    }
+    attempts.push_back({context, batch});
+}
+
+std::vector<std::pair<int, int>> context_attempts(int requested_context, int requested_batch) {
+    std::vector<std::pair<int, int>> attempts;
+    requested_context = std::max(512, requested_context);
+    requested_batch = std::clamp(requested_batch, 32, 512);
+    push_unique_attempt(attempts, requested_context, requested_batch);
+    push_unique_attempt(attempts, requested_context, 256);
+    push_unique_attempt(attempts, 2048, 256);
+    push_unique_attempt(attempts, 1536, 192);
+    push_unique_attempt(attempts, 1024, 128);
+    push_unique_attempt(attempts, 768, 96);
+    push_unique_attempt(attempts, 512, 64);
+    return attempts;
+}
+
+std::string load_failure_hint(const std::string &detail) {
+    std::ostringstream message;
+    message << "No se pudo cargar este GGUF en el telefono.";
+    if (!detail.empty()) message << " Detalle de llama.cpp: " << detail;
+    message << " La app ya intento carga por mmap, carga normal y contexto reducido. "
+            << "Para Android usa modelos cuantizados Q4_K_M o Q5_K_M; los BF16/F16 o muy grandes "
+            << "pueden necesitar mas RAM de la disponible.";
+    return message.str();
+}
+
 void unload_locked() {
     if (g_context != nullptr) {
         llama_free(g_context);
@@ -256,31 +293,58 @@ Java_com_localcharacter_app_llm_LlamaBridge_loadModel(
             return nullptr;
         }
     }
-    llama_context_params context_params = llama_context_default_params();
-    context_params.n_ctx = static_cast<uint32_t>(context_size);
-    g_batch_size = std::clamp(static_cast<int>(batch_size), 32, 512);
-    context_params.n_batch = static_cast<uint32_t>(std::min(context_size, g_batch_size));
-    context_params.n_ubatch = context_params.n_batch;
-    context_params.n_threads = std::max(1, static_cast<int>(threads));
-    context_params.n_threads_batch = std::max(1, static_cast<int>(threads));
-    // Interrupt CPU graph execution inside llama_decode(), not only between batches.
-    // This keeps Android responsive when a multi-billion parameter model is stopped.
-    context_params.abort_callback = should_abort_decode;
-    context_params.abort_callback_data = nullptr;
-    context_params.no_perf = true;
-    g_context = llama_init_from_model(g_model, context_params);
+    const int safe_threads = std::max(1, static_cast<int>(threads));
+    const int requested_context = std::max(512, static_cast<int>(context_size));
+    const int requested_batch = std::clamp(static_cast<int>(batch_size), 32, 512);
+    const auto attempts = context_attempts(requested_context, requested_batch);
+    std::string last_context_error;
+    int used_context = 0;
+    int used_batch = 0;
+    for (const auto &[attempt_context, attempt_batch] : attempts) {
+        g_last_native_error.clear();
+        llama_context_params context_params = llama_context_default_params();
+        context_params.n_ctx = static_cast<uint32_t>(attempt_context);
+        context_params.n_batch = static_cast<uint32_t>(attempt_batch);
+        context_params.n_ubatch = context_params.n_batch;
+        context_params.n_threads = safe_threads;
+        context_params.n_threads_batch = safe_threads;
+        // Interrupt CPU graph execution inside llama_decode(), not only between batches.
+        // This keeps Android responsive when a multi-billion parameter model is stopped.
+        context_params.abort_callback = should_abort_decode;
+        context_params.abort_callback_data = nullptr;
+        context_params.no_perf = true;
+        LOGI("Trying context init: n_ctx=%d, n_batch=%d, threads=%d", attempt_context, attempt_batch, safe_threads);
+        g_context = llama_init_from_model(g_model, context_params);
+        if (g_context != nullptr) {
+            used_context = attempt_context;
+            used_batch = attempt_batch;
+            break;
+        }
+        last_context_error = friendly_native_error();
+        LOGE("Context init failed for n_ctx=%d, n_batch=%d: %s", attempt_context, attempt_batch, last_context_error.c_str());
+    }
     if (g_context == nullptr) {
+        const std::string message = load_failure_hint(last_context_error.empty()
+                ? "no hay memoria suficiente para crear el contexto del modelo"
+                : last_context_error);
         unload_locked();
-        throw_java(env, "No hay memoria suficiente para crear el contexto del modelo.");
+        throw_java(env, message.c_str());
         return nullptr;
     }
-    g_threads = std::max(1, static_cast<int>(threads));
+    g_threads = safe_threads;
+    g_batch_size = used_batch;
+    g_context_size = used_context;
     llama_set_n_threads(g_context, g_threads, g_threads);
     const llama_vocab *vocab = llama_model_get_vocab(g_model);
     char description[512] = {};
     llama_model_desc(g_model, description, sizeof(description));
-    LOGI("Model loaded: %s, vocab=%d", description, llama_vocab_n_tokens(vocab));
-    return env->NewStringUTF(description);
+    std::ostringstream result;
+    result << description << " | contexto " << used_context << " | batch " << used_batch;
+    if (used_context < requested_context || used_batch < requested_batch) {
+        result << " | fallback movil";
+    }
+    LOGI("Model loaded: %s, vocab=%d, n_ctx=%d, n_batch=%d", description, llama_vocab_n_tokens(vocab), used_context, used_batch);
+    return env->NewStringUTF(result.str().c_str());
 }
 
 extern "C" JNIEXPORT void JNICALL

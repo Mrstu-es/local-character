@@ -74,4 +74,18 @@ class ConversationModesTest {
         assertTrue(cleaned.startsWith("*Tsuyu"))
         assertEquals("", RoleplayTextFormatter.normalize("<think>todavía razonando"))
     }
+
+    @Test fun `roleplay formatter hides standalone processing filler`() {
+        assertEquals("", RoleplayTextFormatter.normalize("*Hace una pausa breve, pensativa, antes de continuar.*"))
+        assertEquals(
+            "\"No puedo asegurarlo todavía.\"",
+            RoleplayTextFormatter.normalize(
+                """
+                    *Observa la escena con atención, sin dar nada por hecho.*
+
+                    "No puedo asegurarlo todavía."
+                """.trimIndent(),
+            ),
+        )
+    }
 }

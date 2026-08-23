@@ -42,7 +42,10 @@ class LlamaCppEngine(private val nativeLibraryDir: String) : LlmEngine {
             details
         }.onFailure { error ->
             modelName = null
-            mutableState.value = LlmState.Error("El modelo no pudo cargarse.", error.message)
+            mutableState.value = LlmState.Error(
+                "El modelo no pudo cargarse.",
+                friendlyLoadError(displayName, error),
+            )
         }
     }
 
@@ -120,4 +123,29 @@ class LlamaCppEngine(private val nativeLibraryDir: String) : LlmEngine {
     }
 
     override fun nativeVersion(): String = runCatching { LlamaBridge.getVersion() }.getOrElse { "JNI no disponible: ${it.message}" }
+
+    private fun friendlyLoadError(displayName: String, error: Throwable): String {
+        val detail = error.message.orEmpty().trim()
+        val lower = detail.lowercase()
+        val memoryLike = listOf(
+            "memory",
+            "memoria",
+            "alloc",
+            "out of",
+            "no hay memoria",
+            "contexto",
+            "mmap",
+        ).any { it in lower }
+        val base = if (memoryLike) {
+            "No se pudo cargar $displayName con la memoria disponible del telefono. La app ya intento carga optimizada, carga alternativa y contexto reducido."
+        } else {
+            "llama.cpp no pudo abrir $displayName. Puede estar incompleto, dañado o usar una arquitectura GGUF no compatible con esta version."
+        }
+        val recommendation = "Para Android recomendamos GGUF cuantizados Q4_K_M o Q5_K_M; evita BF16/F16 o modelos grandes si el telefono tiene poca RAM libre."
+        return if (detail.isBlank()) {
+            "$base $recommendation"
+        } else {
+            "$base $recommendation Detalle tecnico: $detail"
+        }
+    }
 }

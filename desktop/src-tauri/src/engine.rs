@@ -214,6 +214,102 @@ fn chrono_like_timestamp() -> String {
     format!("{:?}", std::time::SystemTime::now())
 }
 
+fn reserve_local_port() -> Result<u16, String> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| format!("No se pudo reservar un puerto local: {error}"))?;
+    listener
+        .local_addr()
+        .map(|address| address.port())
+        .map_err(|error| format!("No se pudo leer el puerto local: {error}"))
+}
+
+fn push_unique(values: &mut Vec<i32>, value: i32) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
+}
+
+fn gpu_layer_attempts(requested: i32) -> Vec<i32> {
+    let requested = requested.clamp(-1, 999);
+    let mut attempts = Vec::new();
+    if requested == 0 {
+        push_unique(&mut attempts, 0);
+        return attempts;
+    }
+    if requested < 0 {
+        for value in [-1, 24, 16, 8, 0] {
+            push_unique(&mut attempts, value);
+        }
+        return attempts;
+    }
+    push_unique(&mut attempts, requested);
+    for value in [64, 48, 32, 24, 16, 8, 0] {
+        if value < requested || value == 0 {
+            push_unique(&mut attempts, value);
+        }
+    }
+    attempts
+}
+
+fn gpu_attempt_label(gpu_layers: i32) -> String {
+    match gpu_layers {
+        -1 => "GPU completa".to_string(),
+        0 => "CPU".to_string(),
+        value => format!("GPU + CPU ({value} capas en VRAM)"),
+    }
+}
+
+fn model_size_gb(model: &ModelRecord) -> f64 {
+    model.size_bytes.max(0) as f64 / 1024.0 / 1024.0 / 1024.0
+}
+
+fn recent_log_tail(logs: &Arc<Mutex<Vec<EngineLog>>>) -> String {
+    let Ok(logs) = logs.lock() else {
+        return String::new();
+    };
+    logs.iter()
+        .rev()
+        .take(12)
+        .map(|entry| entry.message.as_str())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn load_failure_message(
+    model: &ModelRecord,
+    requested: i32,
+    last_error: &str,
+    logs: &str,
+) -> String {
+    let combined = format!("{last_error} {logs}").to_ascii_lowercase();
+    let memory_like = combined.contains("out of memory")
+        || combined.contains("not enough")
+        || combined.contains("failed to allocate")
+        || combined.contains("vk::")
+        || combined.contains("cuda")
+        || combined.contains("vulkan")
+        || combined.contains("memory")
+        || combined.contains("memoria")
+        || combined.contains("termin");
+    if memory_like && requested != 0 {
+        return format!(
+            "No se pudo cargar {} ({:.1} GB). La app intento GPU completa, GPU parcial y CPU, pero llama-server se cerro antes de estar listo. En esta PC usa el Q4_K_M para conversar; el BF16 necesita bastante mas RAM/VRAM libre. Detalle: {}",
+            model.name,
+            model_size_gb(model),
+            last_error
+        );
+    }
+    format!(
+        "No se pudo cargar {} ({:.1} GB). Detalle: {}",
+        model.name,
+        model_size_gb(model),
+        last_error
+    )
+}
+
 pub trait LocalLlmEngine {
     fn load_model(&mut self, model: ModelRecord, gpu_layers: i32) -> Result<EngineStatus, String>;
     fn unload_model(&mut self) -> Result<(), String>;
@@ -245,25 +341,6 @@ impl LocalLlmEngine for EngineRuntime {
         self.error = None;
         self.runtime_state = RuntimeState::Starting;
 
-        let port = match TcpListener::bind(("127.0.0.1", 0)) {
-            Ok(listener) => match listener.local_addr() {
-                Ok(address) => address.port(),
-                Err(error) => {
-                    self.runtime_state = RuntimeState::Error;
-                    self.loaded_model = None;
-                    let message = format!("No se pudo leer el puerto local: {error}");
-                    self.error = Some(message.clone());
-                    return Err(message);
-                }
-            },
-            Err(error) => {
-                self.runtime_state = RuntimeState::Error;
-                self.loaded_model = None;
-                let message = format!("No se pudo reservar un puerto local: {error}");
-                self.error = Some(message.clone());
-                return Err(message);
-            }
-        };
         // Do not blindly allocate a model's advertised maximum context (many
         // GGUF files report 128k+ and would OOM a laptop). The UI generation
         // setting is currently 8192, so start the sidecar at that safe limit
@@ -273,71 +350,127 @@ impl LocalLlmEngine for EngineRuntime {
             .unwrap_or(8192)
             .clamp(512, 8192)
             .to_string();
-        let gpu_layers_value = gpu_layers.clamp(-1, 999);
-        let gpu_layers = gpu_layers_value.to_string();
+        let requested_gpu_layers = gpu_layers.clamp(-1, 999);
+        let attempts = gpu_layer_attempts(requested_gpu_layers);
         // Vulkan exposes every adapter to llama.cpp (including the integrated
         // GPU). Prefer the discrete NVIDIA adapter when GPU offload is
         // enabled; otherwise Vulkan's default can silently select Intel.
-        let accelerator_device = (gpu_layers_value != 0)
+        let accelerator_device = (requested_gpu_layers != 0)
             .then(|| preferred_accelerator_device(&executable))
             .flatten();
+        let mut last_error = None;
 
-        let mut command = native_process::command(&executable);
-        if let Some(device) = accelerator_device.as_deref() {
-            self.log("info", format!("Aceleración GPU: {device}"));
-            command.args(["--device", device]);
-        }
-        command
-            .args(["--model", &model.path, "--host", "127.0.0.1", "--port"])
-            .arg(port.to_string())
-            .args([
-                "--ctx-size",
-                &context,
-                "-ngl",
-                &gpu_layers,
-                "--parallel",
-                "1",
-                "--no-ui",
-                // Roleplay must expose only the character response. Models
-                // such as Qwen3 otherwise default to chain-of-thought output
-                // even when the client sends enable_thinking=false.
-                "--reasoning",
-                "off",
-                "--log-verbosity",
-                "1",
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                self.runtime_state = RuntimeState::Error;
-                self.loaded_model = None;
-                let message = format!("No se pudo iniciar llama-server: {error}");
-                self.error = Some(message.clone());
-                return Err(message);
+        for (index, gpu_layers_value) in attempts.iter().enumerate() {
+            self.runtime_state = RuntimeState::Starting;
+            self.error = None;
+            let label = gpu_attempt_label(*gpu_layers_value);
+            self.log("info", format!("Cargando {} con {label}", model.name));
+            let port = match reserve_local_port() {
+                Ok(port) => port,
+                Err(error) => {
+                    self.runtime_state = RuntimeState::Error;
+                    self.loaded_model = None;
+                    self.error = Some(error.clone());
+                    return Err(error);
+                }
+            };
+            let gpu_layers = gpu_layers_value.to_string();
+
+            let mut command = native_process::command(&executable);
+            if *gpu_layers_value != 0 {
+                if let Some(device) = accelerator_device.as_deref() {
+                    self.log("info", format!("Aceleración GPU: {device}"));
+                    command.args(["--device", device]);
+                }
             }
-        };
+            command
+                .args(["--model", &model.path, "--host", "127.0.0.1", "--port"])
+                .arg(port.to_string())
+                .args([
+                    "--ctx-size",
+                    &context,
+                    "-ngl",
+                    &gpu_layers,
+                    "--parallel",
+                    "1",
+                    "--no-ui",
+                    // Roleplay must expose only the character response. Models
+                    // such as Qwen3 otherwise default to chain-of-thought output
+                    // even when the client sends enable_thinking=false.
+                    "--reasoning",
+                    "off",
+                    "--log-verbosity",
+                    "1",
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let mut child = match command.spawn() {
+                Ok(child) => child,
+                Err(error) => {
+                    let message = format!("No se pudo iniciar llama-server: {error}");
+                    self.log("error", message.clone());
+                    last_error = Some(message);
+                    continue;
+                }
+            };
 
-        let log_store = Arc::clone(&self.logs);
-        if let Some(stdout) = child.stdout.take() {
-            spawn_log_reader(stdout, Arc::clone(&log_store), "info");
-        }
-        if let Some(stderr) = child.stderr.take() {
-            spawn_log_reader(stderr, log_store, "debug");
-        }
-        self.child = Some(child);
-        self.server_port = Some(port);
-        self.runtime_state = RuntimeState::LoadingModel;
+            let log_store = Arc::clone(&self.logs);
+            if let Some(stdout) = child.stdout.take() {
+                spawn_log_reader(stdout, Arc::clone(&log_store), "info");
+            }
+            if let Some(stderr) = child.stderr.take() {
+                spawn_log_reader(stderr, log_store, "debug");
+            }
+            self.child = Some(child);
+            self.server_port = Some(port);
+            self.runtime_state = RuntimeState::LoadingModel;
 
-        if let Err(error) = self.wait_until_ready() {
-            self.log("error", error.clone());
-            self.terminate_server();
-            self.runtime_state = RuntimeState::Error;
-            self.error = Some(error.clone());
-            return Err(error);
+            match self.wait_until_ready() {
+                Ok(()) => {
+                    if let Some(loaded_model) = self.loaded_model.as_mut() {
+                        loaded_model.backend = Some(label);
+                    }
+                    if index > 0 {
+                        self.log(
+                            "info",
+                            format!(
+                                "{} cargo usando fallback: {}",
+                                model.name,
+                                gpu_attempt_label(*gpu_layers_value)
+                            ),
+                        );
+                    }
+                    return Ok(self.status());
+                }
+                Err(error) => {
+                    self.log("error", format!("{label} fallo: {error}"));
+                    last_error = Some(error);
+                    self.terminate_server();
+                    if index + 1 < attempts.len() {
+                        self.log(
+                            "warn",
+                            format!(
+                                "Reintentando {} con {}",
+                                model.name,
+                                gpu_attempt_label(attempts[index + 1])
+                            ),
+                        );
+                    }
+                }
+            }
         }
-        Ok(self.status())
+        self.runtime_state = RuntimeState::Error;
+        let logs = recent_log_tail(&self.logs);
+        let error = load_failure_message(
+            &model,
+            requested_gpu_layers,
+            last_error
+                .as_deref()
+                .unwrap_or("llama-server no pudo iniciar"),
+            &logs,
+        );
+        self.error = Some(error.clone());
+        Err(error)
     }
 
     fn unload_model(&mut self) -> Result<(), String> {
@@ -1129,6 +1262,11 @@ pub fn generate_stream(
     max_output: u32,
     _context: u32,
     _gpu_layers: i32,
+    temperature: f32,
+    top_p: f32,
+    top_k: u32,
+    min_p: f32,
+    repeat_penalty: f32,
 ) -> Result<(), String> {
     let (port, model_name, chat_messages, thinking_capable) = {
         let mut state = runtime
@@ -1190,15 +1328,11 @@ pub fn generate_stream(
         model: model_name,
         messages: chat_messages,
         max_tokens: max_output,
-        // Small and medium GGUF roleplay models become noticeably less
-        // coherent with llama.cpp's more creative defaults. These conservative
-        // values keep the current scene and the latest question dominant while
-        // retaining enough variation for natural dialogue.
-        temperature: 0.35,
-        top_p: 0.9,
-        top_k: 40,
-        min_p: 0.05,
-        repeat_penalty: 1.08,
+        temperature,
+        top_p,
+        top_k,
+        min_p,
+        repeat_penalty,
         stream: true,
         stream_options: StreamOptions {
             include_usage: true,
